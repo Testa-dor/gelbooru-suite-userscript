@@ -1,0 +1,3459 @@
+// ==UserScript==
+// @name        Gelbooru Suite
+// @namespace   GelbooruEnhancer
+// @version     2.1.6
+// @description Enhances Gelbooru with thumbnail previews, a categorized pop-up search, an immersive viewer, pool markers, and more.
+// @author      Testador (Refactored by Gemini)
+// @match       *://gelbooru.com/*
+// @icon        https://gelbooru.com/layout/gelbooru-logo.svg
+// @grant       GM_download
+// @grant       GM.xmlHttpRequest
+// @grant       GM.getValue
+// @grant       GM.setValue
+// @grant       GM_registerMenuCommand
+// @grant       GM_addStyle
+// @grant       GM_openInTab
+// @license     MIT
+// @run-at      document-idle
+// ==/UserScript==
+
+/* global navigatePrev, navigateNext */
+
+(function() {
+    'use strict';
+
+    // =================================================================================
+    // CONFIGURATION AND CONSTANTS MODULE
+    // =================================================================================
+    const Config = {
+        API_URLS: {
+            BASE: 'https://gelbooru.com/index.php?page=dapi&s=post&q=index&json=1',
+            AUTOCOMPLETE: 'https://gelbooru.com/index.php?page=autocomplete2&type=tag_query&limit=10',
+        },
+        DEFAULT_SETTINGS: {
+            DEBUG: true,
+            // --- Global Toggles ---
+            ENABLE_ADVANCED_SEARCH: true,
+            ENABLE_PEEK_PREVIEWS: true,
+            ENABLE_ADD_TO_POOL: true,
+            ENABLE_DOWNLOADER: true,
+            ENABLE_POST_MARKERS: true,
+            HIDE_PAGE_SCROLLBARS: true,
+            BLACKLIST_TAGS: '',
+
+            // --- Downloader ---
+            DOWNLOAD_FOLDER: 'gelbooru',
+
+            // --- Previews ---
+            PREVIEW_QUALITY: 'high',
+            PREVIEW_SCALE_FACTOR: 2.5,
+            PREVIEW_VIDEOS_MUTED: true,
+            PREVIEW_VIDEOS_LOOP: true,
+            SHOW_DELAY: 350,
+            HIDE_DELAY: 175,
+
+            // --- Hotkeys ---
+            KEY_GALLERY_NEXT_PAGE: 'ArrowRight',
+            KEY_GALLERY_PREV_PAGE: 'ArrowLeft',
+            KEY_PEEK_VIDEO_PLAY_PAUSE: ' ',
+            KEY_PEEK_VIDEO_SEEK_BACK: 'ArrowLeft',
+            KEY_PEEK_VIDEO_SEEK_FORWARD: 'ArrowRight',
+            KEY_VIEWER_PREV_IMAGE: 'ArrowUp',
+            KEY_VIEWER_NEXT_IMAGE: 'ArrowDown',
+            KEY_VIEWER_TOGGLE_INFO: 'i',
+
+            // --- API ---
+            API_KEY: '',
+            USER_ID: '',
+        },
+        SELECTORS: {
+            SEARCH_INPUT: '#tags-search',
+            THUMBNAIL_GRID_SELECTOR: '.thumbnail-container, #post-list > div, .mainBodyPadding',
+            THUMBNAIL_ANCHOR_SELECTOR: '.thumbnail-preview > a',
+            VIDEO_PLAYER_SELECTOR: 'main video#gelcomVideoPlayer',
+            IMAGE_SELECTOR: 'main #image',
+            PAGINATION_CURRENT_SELECTOR: '.pagination b',
+            PREVIEW_CONTAINER_ID: 'enhancer-preview-container',
+            SETTINGS_MODAL_ID: 'enhancer-settings-modal',
+            ADVANCED_SEARCH_MODAL_ID: 'gbs-advanced-search-modal',
+            galleryNavSubmenu: '.navSubmenu',
+            postTagListItem: '#tag-list li[class*="tag-type-"]',
+            postTagLink: 'a[href*="&tags="]',
+            MEDIA_VIEWER_THUMBNAIL_ANCHOR: '.thumbnail-container > span > a, .thumbnail-container > .thumbnail-preview > a',
+
+        },
+        STORAGE_KEYS: {
+            SUITE_SETTINGS: 'gelbooruSuite_settings',
+            FAVORITE_POOLS: 'gbs_favorite_pools',
+            POST_MARKER_CACHE: 'gbs_post_marker_cache',
+        },
+        COLORS_CONSTANTS: {
+            'artist': '#AA0000',
+            'character': '#00AA00',
+            'copyright': '#AA00AA',
+            'metadata': '#FF8800',
+            'general': '#337ab7',
+            'excluded': '#d55e5e',
+        },
+    };
+
+    // =================================================================================
+    // GLOBAL STATE MODULE
+    // =================================================================================
+    const GlobalState = {
+        searchDebounceTimeout: null,
+        previewsTemporarilyDisabled: false, // Used to disable Peek
+        pageType: null,
+    };
+
+    // =================================================================================
+    // UTILITY, API, ZOOM & LOGGER MODULES (CORE)
+    // =================================================================================
+    const Utils = {
+        makeRequest: function(options) {
+            let xhr;
+            const promise = new Promise((resolve, reject) => {
+                xhr = GM.xmlHttpRequest({
+                    ...options,
+                    onload: (response) => (response.status >= 200 && response.status < 300) ? resolve(response) : reject(new Error(`Request failed: Status ${response.status}`)),
+                    onerror: (response) => reject(new Error(`Network error: ${response.statusText}`)),
+                    ontimeout: () => reject(new Error('Request timed out.'))
+                });
+            });
+            return { promise, xhr };
+        },
+        getPostId: (postUrl) => new URL(postUrl).searchParams.get('id'),
+        formatHotkeyForStorage: function(key) {
+            return key === 'Space' ? ' ' : key.trim();
+        },
+        formatHotkeyForDisplay: function(key) {
+            return key === ' ' ? 'Space' : key;
+        },
+    };
+
+    const Logger = {
+        _log: function(level, ...args) {
+            if (!Settings.State.DEBUG) return;
+            const prefix = '[Gelbooru Suite]';
+            switch (level) {
+                case 'log': console.log(prefix, ...args); break;
+                case 'warn': console.warn(prefix, ...args); break;
+                case 'error': console.error(prefix, ...args); break;
+                default: console.log(prefix, ...args); break;
+            }
+        },
+        log: function(...args) { this._log('log', ...args); },
+        warn: function(...args) { this._log('warn', ...args); },
+        error: function(...args) { this._log('error', ...args); }
+    };
+
+    const API = {
+        fetchTagCategory: async function(tagName) {
+            const encodedTerm = encodeURIComponent(tagName.replace(/ /g, '_'));
+            const url = `${Config.API_URLS.AUTOCOMPLETE}&term=${encodedTerm}`;
+            try {
+                const { promise } = Utils.makeRequest({ method: "GET", url });
+                const response = await promise;
+                const data = JSON.parse(response.responseText);
+
+                if (data && data.length > 0) {
+                    const exactMatch = data.find(tag => tag.value === tagName);
+                    if (exactMatch) {
+                        return exactMatch.category === 'tag' ? 'general' : exactMatch.category;
+                    }
+                }
+
+                return 'general';
+            } catch (error) {
+                Logger.error(`Failed to fetch category for tag "${tagName}":`, error);
+                return 'general';
+            }
+        },
+        fetchTagSuggestions: async function(term) {
+            if (!term || term.length < 2) return [];
+            const encodedTerm = encodeURIComponent(term.replace(/ /g, '_'));
+            const url = `${Config.API_URLS.AUTOCOMPLETE}&term=${encodedTerm}`;
+            try {
+                const { promise } = Utils.makeRequest({ method: "GET", url });
+                const response = await promise;
+                const data = JSON.parse(response.responseText);
+                return data || [];
+            } catch (error) {
+                Logger.error("Failed to fetch tag suggestions:", error);
+                return [];
+            }
+        },
+        fetchMediaDetails: async function(postId) {
+            if (!postId) throw new Error("No Post ID provided.");
+            let request;
+            if (Settings.State.API_KEY && Settings.State.USER_ID) {
+                const apiUrl = `${Config.API_URLS.BASE}&id=${postId}&user_id=${Settings.State.USER_ID}&api_key=${Settings.State.API_KEY}`;
+                try {
+                    request = Utils.makeRequest({ method: "GET", url: apiUrl });
+                    Peek.State.pendingPreviewRequest = request.xhr;
+
+                    const response = await request.promise;
+                    if (response.status === 401 || response.status === 403) {
+                        Settings.UI.openModal("Authentication failed. Your API Key or User ID is incorrect. Please enter valid credentials.");
+                        throw new Error("Authentication failed. Please check your credentials.");
+                    }
+                    let data;
+                    try { data = JSON.parse(response.responseText); }
+                    catch (e) {
+                        Logger.error("Failed to parse API response. It might not be valid JSON.", e);
+                        Logger.error("Raw response text:", response.responseText);
+                        throw new Error("Failed to parse API response. It might not be valid JSON.");
+                    }
+                    if (!data?.post?.length) throw new Error("API returned no post data or post not found.");
+                    const post = data.post[0];
+                    const fileUrl = post.file_url;
+                    const isVideo = ['.mp4', '.webm'].some(ext => fileUrl.endsWith(ext));
+                    return { url: fileUrl, type: isVideo ? 'video' : 'image' };
+                } catch (error) {
+                    if (error.message.includes('abort')) {
+                        Logger.log(`Request for post ${postId} was aborted.`);
+                        throw error;
+                    }
+                    Logger.warn(`[Gelbooru Suite] API request failed: ${error.message}. Attempting HTML fallback.`);
+                } finally {
+                    Peek.State.pendingPreviewRequest = null;
+                }
+            }
+
+            try {
+                Logger.log(`[Gelbooru Suite] Using HTML fallback for post ID: ${postId}`);
+                const postUrl = `https://gelbooru.com/index.php?page=post&s=view&id=${postId}`;
+
+                request = Utils.makeRequest({ method: "GET", url: postUrl });
+                Peek.State.pendingPreviewRequest = request.xhr;
+
+                const mediaData = await this.getPostData(request.promise);
+                return { url: mediaData.contentUrl, type: mediaData.type };
+            } catch (fallbackError) {
+                Logger.error('[Gelbooru Suite] HTML fallback also failed:', fallbackError);
+                throw fallbackError;
+            } finally {
+                Peek.State.pendingPreviewRequest = null;
+            }
+        },
+        fetchMediaDetailsFromHTML: async function(postUrl) {
+            if (!postUrl) throw new Error("No Post URL provided.");
+            try {
+                Logger.log(`[Gelbooru Suite] Using HTML-only fetch for: ${postUrl}`);
+                const { promise } = Utils.makeRequest({ method: "GET", url: postUrl });
+                const mediaData = await this.getPostData(promise);
+                return { url: mediaData.contentUrl, type: mediaData.type };
+            } catch (error) {
+                Logger.error('[Gelbooru Suite] HTML fetch failed:', error);
+                throw error;
+            }
+        },
+        fetchSavedSearches: async function(forceRefresh = false) {
+            const cacheKey = 'gbs_saved_searches_cache';
+            const cacheDuration = 8 * 60 * 60 * 1000; // 8 hour
+
+            if (!forceRefresh) {
+                const cachedData = await GM.getValue(cacheKey, null);
+                if (cachedData && (Date.now() - cachedData.timestamp < cacheDuration)) {
+                    Logger.log("Using searches saved from the local cache.");
+                    return cachedData.searches;
+                }
+            }
+
+            Logger.log(forceRefresh ? "Forcing cache refresh." : "Cache expired. Fetching from the network...");
+            let allSearches = [];
+            let nextPageUrl = '/index.php?page=tags&s=saved_search';
+
+            try {
+                while (nextPageUrl) {
+                    const { promise } = Utils.makeRequest({ method: "GET", url: nextPageUrl });
+                    const response = await promise;
+                    const doc = new DOMParser().parseFromString(response.responseText, "text/html");
+                    const searchNodes = doc.querySelectorAll('span[style*="font-size: 1.5em"] > a:nth-of-type(2)');
+                    const searchesOnPage = Array.from(searchNodes).map(node => node.textContent.trim());
+                    allSearches.push(...searchesOnPage);
+                    const nextPageLink = doc.querySelector('.pagination b + a');
+                    nextPageUrl = nextPageLink ? nextPageLink.getAttribute('href') : null;
+                }
+
+                await GM.setValue(cacheKey, { searches: allSearches, timestamp: Date.now() });
+                Logger.log(`Cache updated with ${allSearches.length} searches.`);
+                return allSearches;
+
+            } catch (error) {
+                Logger.error("Failed to fetch saved searches:", error);
+                const cachedData = await GM.getValue(cacheKey, null);
+                if (cachedData) {
+                    Logger.warn("Using old cache data as fallback.");
+                    return cachedData.searches;
+                }
+                return [];
+            }
+        },
+        getPostData: async function(requestPromise) {
+            const response = await requestPromise;
+            const doc = new DOMParser().parseFromString(response.responseText, "text/html");
+            const metaTag = doc.querySelector("meta[property='og:image']");
+            const videoTag = doc.querySelector("video#gelcomVideoPlayer source");
+            let contentUrl, type;
+            if (videoTag && videoTag.src) {
+                contentUrl = videoTag.src;
+                type = 'video';
+            } else if (metaTag) {
+                contentUrl = metaTag.getAttribute('content');
+                type = ['.mp4', '.webm'].some(ext => contentUrl.endsWith(ext)) ? 'video' : 'image';
+            }
+            if (contentUrl) {
+                return { contentUrl, type, tags: this.parseTags(doc) };
+            } else {
+                throw new Error(`Media not found for post.`);
+            }
+        },
+        parseTags: function(doc) {
+            const tags = {};
+            doc.querySelectorAll(Config.SELECTORS.postTagListItem).forEach(li => {
+                const categoryMatch = li.className.match(/tag-type-([a-z_]+)/);
+                const category = categoryMatch ? categoryMatch[1] : 'general';
+                const tagLink = li.querySelector(Config.SELECTORS.postTagLink);
+                if (tagLink) {
+                    if (!tags[category]) { tags[category] = []; }
+                    tags[category].push({ name: tagLink.textContent.trim(), url: tagLink.href });
+                }
+            });
+            return tags;
+        }
+    };
+
+    // =================================================================================
+    // SETTINGS MODULE
+    // =================================================================================
+    const Settings = {
+        State: {},
+        settingsMap: [
+            { id: 'setting-advanced-search', key: 'ENABLE_ADVANCED_SEARCH', type: 'checkbox' },
+            { id: 'setting-peek-previews', key: 'ENABLE_PEEK_PREVIEWS', type: 'checkbox' },
+            { id: 'setting-add-to-pool', key: 'ENABLE_ADD_TO_POOL', type: 'checkbox' },
+            { id: 'setting-downloader', key: 'ENABLE_DOWNLOADER', type: 'checkbox' },
+            { id: 'setting-post-markers', key: 'ENABLE_POST_MARKERS', type: 'checkbox' },
+            { id: 'setting-hide-scrollbars', key: 'HIDE_PAGE_SCROLLBARS', type: 'checkbox' },
+            { id: 'setting-blacklist-tags', key: 'BLACKLIST_TAGS', type: 'textarea' },
+            { id: 'setting-preview-quality', key: 'PREVIEW_QUALITY', type: 'select' },
+            { id: 'setting-preview-scale', key: 'PREVIEW_SCALE_FACTOR', type: 'float' },
+            { id: 'setting-preview-muted', key: 'PREVIEW_VIDEOS_MUTED', type: 'checkbox' },
+            { id: 'setting-preview-loop', key: 'PREVIEW_VIDEOS_LOOP', type: 'checkbox' },
+        ],
+        load: async function() {
+            const savedSettings = await GM.getValue(Config.STORAGE_KEYS.SUITE_SETTINGS, {});
+            this.State = { ...Config.DEFAULT_SETTINGS, ...savedSettings };
+            this.State.favoritePools = await GM.getValue(Config.STORAGE_KEYS.FAVORITE_POOLS, []);
+            Logger.State = this.State; // Pass settings to logger
+        },
+        save: async function() {
+            const getHotkey = (id) => Utils.formatHotkeyForStorage(document.getElementById(id).value);
+            const newSettings = {};
+
+            this.settingsMap.forEach(setting => {
+                const element = document.getElementById(setting.id);
+                if (!element) return;
+
+                switch (setting.type) {
+                    case 'checkbox':
+                        newSettings[setting.key] = element.checked;
+                        break;
+                    case 'textarea':
+                    case 'text':
+                    case 'select':
+                        newSettings[setting.key] = element.value.trim();
+                        break;
+                    case 'float':
+                        newSettings[setting.key] = Math.max(1, parseFloat(element.value) || Config.DEFAULT_SETTINGS[setting.key]);
+                        break;
+                }
+            });
+
+            Object.assign(newSettings, {
+                KEY_GALLERY_NEXT_PAGE: getHotkey('setting-key-gallery-next') || Config.DEFAULT_SETTINGS.KEY_GALLERY_NEXT_PAGE,
+                KEY_GALLERY_PREV_PAGE: getHotkey('setting-key-gallery-prev') || Config.DEFAULT_SETTINGS.KEY_GALLERY_PREV_PAGE,
+                KEY_PEEK_VIDEO_PLAY_PAUSE: getHotkey('setting-key-peek-vid-play') || Config.DEFAULT_SETTINGS.KEY_PEEK_VIDEO_PLAY_PAUSE,
+                KEY_PEEK_VIDEO_SEEK_FORWARD: getHotkey('setting-key-peek-vid-fwd') || Config.DEFAULT_SETTINGS.KEY_PEEK_VIDEO_SEEK_FORWARD,
+                KEY_PEEK_VIDEO_SEEK_BACK: getHotkey('setting-key-peek-vid-back') || Config.DEFAULT_SETTINGS.KEY_PEEK_VIDEO_SEEK_BACK,
+                KEY_VIEWER_PREV_IMAGE: getHotkey('setting-key-viewer-prev') || Config.DEFAULT_SETTINGS.KEY_VIEWER_PREV_IMAGE,
+                KEY_VIEWER_NEXT_IMAGE: getHotkey('setting-key-viewer-next') || Config.DEFAULT_SETTINGS.KEY_VIEWER_NEXT_IMAGE,
+                KEY_VIEWER_TOGGLE_INFO: getHotkey('setting-key-viewer-info') || Config.DEFAULT_SETTINGS.KEY_VIEWER_TOGGLE_INFO,
+            });
+
+            Object.assign(newSettings, {
+                API_KEY: document.getElementById('setting-api-key').value.trim(),
+                USER_ID: document.getElementById('setting-user-id').value.trim(),
+                DOWNLOAD_FOLDER: document.getElementById('setting-download-folder').value.trim() || Config.DEFAULT_SETTINGS.DOWNLOAD_FOLDER,
+            });
+
+            await GM.setValue(Config.STORAGE_KEYS.SUITE_SETTINGS, newSettings);
+
+            const favoritePools = [];
+            for (let i = 1; i <= 5; i++) {
+                const poolName = document.getElementById(`setting-pool-name-${i}`).value.trim();
+                const poolId = document.getElementById(`setting-pool-id-${i}`).value.trim();
+                const poolColor = document.getElementById(`setting-pool-color-${i}`).value;
+                if (poolName && poolId && poolId.match(/^\d+$/)) {
+                    favoritePools.push({ name: poolName, id: poolId, color: poolColor });
+                }
+            }
+            await GM.setValue(Config.STORAGE_KEYS.FAVORITE_POOLS, favoritePools);
+
+            this.State = { ...newSettings, favoritePools };
+            this.UI.closeModal();
+            window.location.reload();
+        },
+        clearCredentials: async function() {
+            if (confirm("Are you sure you want to clear your API Key and User ID? The page will reload.")) {
+                const newSettings = { ...this.State, API_KEY: '', USER_ID: '' };
+                await GM.setValue(Config.STORAGE_KEYS.SUITE_SETTINGS, newSettings);
+                this.State = newSettings;
+                window.location.reload();
+            }
+        },
+        export: function() {
+            const jsonString = JSON.stringify(this.State, null, 2);
+            const textarea = document.getElementById('enhancer-import-area');
+            const originalPlaceholder = textarea.placeholder;
+
+            const resetTextarea = () => {
+                textarea.placeholder = originalPlaceholder;
+            };
+
+            navigator.clipboard.writeText(jsonString).then(() => {
+                textarea.placeholder = 'Settings copied to clipboard!';
+                setTimeout(resetTextarea, 3000);
+            });
+        },
+        import: async function() {
+            const textarea = document.getElementById('enhancer-import-area');
+            const jsonString = textarea.value;
+            const originalPlaceholder = textarea.placeholder;
+
+            const showMessage = (message, duration = 3000) => {
+                textarea.placeholder = message;
+                setTimeout(() => {
+                    textarea.placeholder = originalPlaceholder;
+                }, duration);
+            };
+
+            if (!jsonString.trim()) {
+                showMessage('Import field is empty.');
+                return;
+            }
+            try {
+                const importData = JSON.parse(jsonString);
+                if (importData && typeof importData === 'object') {
+                    await GM.setValue(Config.STORAGE_KEYS.SUITE_SETTINGS, importData);
+                    showMessage('Settings imported! Page will reload...', 2000);
+                    textarea.value = '';
+                    setTimeout(() => window.location.reload(), 1500);
+                } else {
+                    throw new Error("Invalid or incomplete settings format.");
+                }
+            } catch (error) {
+                showMessage(`Import failed: ${error.message}`, 4000);
+                Logger.error('Import error:', error);
+            }
+        },
+        testCredentials: async function() {
+            const testButton = document.getElementById('enhancer-test-creds');
+            const apiKey = document.getElementById('setting-api-key').value.trim();
+            const userId = document.getElementById('setting-user-id').value.trim();
+            const originalText = 'Test Connection';
+
+            const originalBgColor = testButton.style.backgroundColor;
+
+            const resetButton = (delay) => {
+                setTimeout(() => {
+                    testButton.textContent = originalText;
+                    testButton.style.backgroundColor = originalBgColor;
+                    testButton.disabled = false;
+                }, delay);
+            };
+
+            testButton.disabled = true;
+
+            if (!apiKey || !userId) {
+                testButton.textContent = 'Missing Keys';
+                testButton.style.backgroundColor = '#EFB700';
+                resetButton(3000);
+                return;
+            }
+
+            testButton.textContent = 'Testing...';
+            testButton.style.backgroundColor = '#61afef';
+
+            const testUrl = `${Config.API_URLS.BASE}&limit=1&user_id=${userId}&api_key=${apiKey}`;
+            try {
+                const { promise } = Utils.makeRequest({ method: "GET", url: testUrl });
+                const response = await promise;
+                if (response.status === 200) {
+                    testButton.textContent = 'Success!';
+                    testButton.style.backgroundColor = '#008450';
+                } else {
+                    throw new Error(`Authentication failed (Status: ${response.status})`);
+                }
+            } catch (error) {
+                Logger.error('API connection test failed:', error);
+                testButton.textContent = 'Error';
+                testButton.style.backgroundColor = '#B81D13';
+            } finally {
+                resetButton(3000);
+            }
+        },
+        UI: {
+            _getGeneralSettingsHTML: function() {
+                return `
+                <div class="settings-tab-pane active" data-tab="general">
+                    <div class="setting-item"><label for="setting-advanced-search">Enable Tag Editor</label><label class="toggle-switch"><input type="checkbox" id="setting-advanced-search"><span class="toggle-slider"></span></label></div>
+                    <div class="setting-item"><label for="setting-peek-previews">Enable Previews</label><label class="toggle-switch"><input type="checkbox" id="setting-peek-previews"><span class="toggle-slider"></span></label></div>
+                    <div class="setting-item"><label for="setting-add-to-pool">Enable Add to Pool</label><label class="toggle-switch"><input type="checkbox" id="setting-add-to-pool"><span class="toggle-slider"></span></label></div>
+                    <div class="setting-item"><label for="setting-downloader">Enable Downloader</label><label class="toggle-switch"><input type="checkbox" id="setting-downloader"><span class="toggle-slider"></span></label></div>
+                    <div class="setting-item"><label for="setting-post-markers">Enable Post Markers (Pools & Favs)</label><label class="toggle-switch"><input type="checkbox" id="setting-post-markers"><span class="toggle-slider"></span></label></div>
+                    <div class="setting-item"><label for="setting-hide-scrollbars">Hide Page Scrollbars (Global)</label><label class="toggle-switch"><input type="checkbox" id="setting-hide-scrollbars"><span class="toggle-slider"></span></label></div>
+                    <hr class="setting-divider">
+                    <div class="setting-item-vertical">
+                        <label for="setting-blacklist-tags">Blacklisted Tags (space-separated)</label>
+                        <p class="setting-note" style="text-align: left; margin: 5px 0 10px 0;">Tags for the 'Toggle Blacklist' button in the Tag Editor modal.</p>
+                        <textarea id="setting-blacklist-tags" rows="3" placeholder="Example: muscular red_eyes pov ..."></textarea>
+                    </div>
+                </div>`;
+            },
+            _getPeekSettingsHTML: function() {
+                return `
+                <div class="settings-tab-pane" data-tab="peek">
+                    <div class="setting-item"><label for="setting-preview-quality">Preview Quality</label><select id="setting-preview-quality"><option value="high">High</option><option value="low">Low</option></select></div>
+                    <div class="setting-item"><label for="setting-preview-scale">Preview Scale Factor</label><input type="number" id="setting-preview-scale" step="0.1" min="1"></div>
+                    <hr class="setting-divider">
+                    <div class="setting-item"><label for="setting-preview-muted">Mute Preview Videos</label><label class="toggle-switch"><input type="checkbox" id="setting-preview-muted"><span class="toggle-slider"></span></label></div>
+                    <div class="setting-item"><label for="setting-preview-loop">Loop Preview Videos</label><label class="toggle-switch"><input type="checkbox" id="setting-preview-loop"><span class="toggle-slider"></span></label></div>
+                </div>`;
+            },
+            _getPoolsSettingsHTML: function() {
+                let poolSettingsHTML = '';
+                for (let i = 1; i <= 5; i++) {
+                    poolSettingsHTML += `
+                    <div class="setting-item gbs-pool-setting-item">
+                        <input type="color" id="setting-pool-color-${i}" class="gbs-pool-color-picker" title="Select a color for this pool's marker">
+                        <input type="text" id="setting-pool-name-${i}" placeholder="Pool ${i} Name" maxlength="20">
+                        <input type="text" id="setting-pool-id-${i}" placeholder="Pool ${i} ID">
+                    </div>`;
+                }
+                return `
+                <div class="settings-tab-pane" data-tab="pools">
+                    <p class="setting-note">Configure up to 5 favorite pools for the "Add to Pool" feature.</p>
+                    <p class="setting-note">Only pools with both a name and a valid numeric ID will be saved.</p>
+                    ${poolSettingsHTML}
+                </div>`;
+            },
+            _getHotkeysSettingsHTML: function() {
+                return `
+                <div class="settings-tab-pane" data-tab="hotkeys">
+                    <p class="setting-note">Click on a field and press the desired key to set a hotkey.</p>
+                    <h4 class="setting-subheader">Gallery Hotkeys</h4>
+                    <div class="setting-item"><label for="setting-key-gallery-prev">Prev Page</label><input type="text" id="setting-key-gallery-prev" class="hotkey-input" readonly></div>
+                    <div class="setting-item"><label for="setting-key-gallery-next">Next Page</label><input type="text" id="setting-key-gallery-next" class="hotkey-input" readonly></div>
+                    <h4 class="setting-subheader">Preview Video Hotkeys</h4>
+                    <div class="setting-item"><label for="setting-key-peek-vid-play">Play/Pause</label><input type="text" id="setting-key-peek-vid-play" class="hotkey-input" readonly></div>
+                    <div class="setting-item"><label for="setting-key-peek-vid-back">Seek Back</label><input type="text" id="setting-key-peek-vid-back" class="hotkey-input" readonly></div>
+                    <div class="setting-item"><label for="setting-key-peek-vid-fwd">Seek Forward</label><input type="text" id="setting-key-peek-vid-fwd" class="hotkey-input" readonly></div>
+                    <h4 class="setting-subheader">Media Viewer Hotkeys</h4>
+                    <div class="setting-item"><label for="setting-key-viewer-prev">Prev Image</label><input type="text" id="setting-key-viewer-prev" class="hotkey-input" readonly></div>
+                    <div class="setting-item"><label for="setting-key-viewer-next">Next Image</label><input type="text" id="setting-key-viewer-next" class="hotkey-input" readonly></div>
+                    <div class="setting-item"><label for="setting-key-viewer-info">Toggle Info</label><input type="text" id="setting-key-viewer-info" class="hotkey-input" readonly></div>
+                </div>`;
+            },
+            _getAdvancedSettingsHTML: function() {
+                return `
+                <div class="settings-tab-pane" data-tab="advanced">
+                    <p class="setting-note">API keys can improve script reliability. Find them in Settings > Options.</p>
+                    <p class="setting-note"><strong>Security Note: Keys are stored locally and are not encrypted.</strong></p>
+                    <div class="setting-item"><label for="setting-api-key">API Key</label><input type="text" id="setting-api-key" placeholder="Your API key"></div>
+                    <div class="setting-item"><label for="setting-user-id">User ID</label><input type="text" id="setting-user-id" placeholder="Your user ID"></div>
+                    <div class="api-test-container">
+                        <button id="enhancer-test-creds">Test Connection</button>
+                    </div>
+                    <p class="enhancer-error-message" id="enhancer-auth-error" style="display:none; text-align: center;"></p>
+                    <hr class="setting-divider">
+                    <div class="setting-item">
+                        <label for="setting-download-folder">Download Folder</label>
+                        <input type="text" id="setting-download-folder" placeholder="e.g., gelbooru_downloads">
+                    </div>
+                    <hr class="setting-divider">
+                    <div class="manage-settings-section">
+                        <p class="setting-note">Export your settings for backup, or import them on another browser.</p>
+                        <div class="manage-buttons">
+                            <button id="enhancer-export-settings">Export</button>
+                            <button id="enhancer-import-settings">Import</button>
+                        </div>
+                        <textarea id="enhancer-import-area" rows="3" placeholder="Paste your exported settings string here and click Import..."></textarea>
+                    </div>
+                </div>`;
+            },
+            createModal: function() {
+                if (document.getElementById(Config.SELECTORS.SETTINGS_MODAL_ID)) return;
+                GM_addStyle(`
+                    #${Config.SELECTORS.SETTINGS_MODAL_ID}-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background-color: rgba(0,0,0,0.7); z-index: 100000; justify-content: center; align-items: center; }
+                    #${Config.SELECTORS.SETTINGS_MODAL_ID} { box-sizing: border-box !important; background-color: #252525; color: #eee !important; border: 1px solid #666; border-radius: 10px; z-index: 101; padding: 20px 7px 7px 7px; width: 90%; max-width: 450px; }
+                    #${Config.SELECTORS.SETTINGS_MODAL_ID} * { color: #eee !important; }
+                    #${Config.SELECTORS.SETTINGS_MODAL_ID} h2 { text-align: center; margin-bottom: 10px; padding-bottom: 10px; }
+                    #${Config.SELECTORS.SETTINGS_MODAL_ID} .settings-tabs { display: flex; margin-bottom: 15px; border-bottom: 1px solid #555; }
+                    #${Config.SELECTORS.SETTINGS_MODAL_ID} .settings-tab-btn { background: none; border: none; color: #aaa !important; padding: 8px 12px; cursor: pointer; font-size: 1em; border-bottom: 2px solid transparent; }
+                    #${Config.SELECTORS.SETTINGS_MODAL_ID} .settings-tab-btn.active { color: #fff !important; border-bottom-color: #006FFA; }
+                    #${Config.SELECTORS.SETTINGS_MODAL_ID} .settings-tab-content { display: grid; align-items: start; padding-top: 10px; }
+                    #${Config.SELECTORS.SETTINGS_MODAL_ID} .settings-tab-pane { grid-row: 1; grid-column: 1; opacity: 0; pointer-events: none; transition: opacity 0.15s ease-in-out; max-height: 65vh; overflow-y: auto; padding: 3px 15px; box-sizing: border-box !important; }
+                    #${Config.SELECTORS.SETTINGS_MODAL_ID} .settings-tab-pane.active { opacity: 1; pointer-events: auto; }
+                    #${Config.SELECTORS.SETTINGS_MODAL_ID} .setting-item { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+                    #${Config.SELECTORS.SETTINGS_MODAL_ID} .setting-item-vertical { display: flex; flex-direction: column; margin-bottom: 12px; }
+                    #${Config.SELECTORS.SETTINGS_MODAL_ID} .setting-item-vertical label { margin-bottom: 8px; }
+                    #${Config.SELECTORS.SETTINGS_MODAL_ID} .setting-item-vertical textarea, #${Config.SELECTORS.SETTINGS_MODAL_ID} #enhancer-import-area { width: 100%; box-sizing: border-box !important; padding: 5px; background: #333; border: 1px solid #555; color: #fff !important; border-radius: 10px; resize: vertical; height: 70px; margin-top: 10px; }
+                    #${Config.SELECTORS.SETTINGS_MODAL_ID} .setting-item label { color: #eee !important; flex-shrink: 0; font-weight: 300 }
+                    #${Config.SELECTORS.SETTINGS_MODAL_ID} .setting-item input[type=number], #${Config.SELECTORS.SETTINGS_MODAL_ID} .setting-item input[type=text], #${Config.SELECTORS.SETTINGS_MODAL_ID} .setting-item select { width: 120px; box-sizing: border-box !important; padding: 6px; background: #333; border: 1px solid #555; color: #fff !important; border-radius: 10px; }
+                    #${Config.SELECTORS.SETTINGS_MODAL_ID} .setting-item input[type=range] { flex-grow: 1; }
+                    #${Config.SELECTORS.SETTINGS_MODAL_ID} .setting-note { font-size: 11px; color: #999 !important; text-align: center; margin-top: 5px; margin-bottom: 15px; }
+                    #${Config.SELECTORS.SETTINGS_MODAL_ID} .setting-note strong { color: #daa520 !important; }
+                    #${Config.SELECTORS.SETTINGS_MODAL_ID} .setting-divider { border: 0; height: 1px; background: #444; margin: 20px 0; }
+                    #${Config.SELECTORS.SETTINGS_MODAL_ID} .setting-subheader { color: #006FFA !important; border-bottom: 1px solid #444; padding-bottom: 5px; margin-top: 20px; margin-bottom: 15px; font-size: 0.9em; text-transform: uppercase; letter-spacing: 0.5px; }
+                    #${Config.SELECTORS.SETTINGS_MODAL_ID} .settings-buttons { text-align: right; margin-top: 20px; border-top: 1px solid #555; padding-top: 15px; display: flex; align-items: center; justify-content: flex-end; gap: 10px; }
+                    #${Config.SELECTORS.SETTINGS_MODAL_ID} .settings-buttons button { padding: 8px 12px; border: none; background-color: #444; color: #fff !important; border-radius: 10px; cursor: pointer; font-weight: bold }
+                    #${Config.SELECTORS.SETTINGS_MODAL_ID} .manage-buttons button { background-color: #444; color: #fff !important; border: 1px solid #666; padding: 8px 12px; border-radius: 10px; cursor: pointer; }
+                    #${Config.SELECTORS.SETTINGS_MODAL_ID} .manage-buttons button:hover { background-color: #555; }
+                    #${Config.SELECTORS.SETTINGS_MODAL_ID} #enhancer-save-settings { background-color: #006FFA; }
+                    #${Config.SELECTORS.SETTINGS_MODAL_ID} #enhancer-clear-creds { background-color: #A43535; }
+                    #${Config.SELECTORS.SETTINGS_MODAL_ID} #zoom-sens-value { color: #fff !important; }
+                    #${Config.SELECTORS.SETTINGS_MODAL_ID} .api-test-container { display: flex; justify-content: center; gap: 10px; margin-top: 10px; }
+                    #${Config.SELECTORS.SETTINGS_MODAL_ID} .gbs-pool-setting-item { gap: 25px; }
+                    #${Config.SELECTORS.SETTINGS_MODAL_ID} .gbs-pool-setting-item input[type=text] { flex-grow: 1; }
+                    #${Config.SELECTORS.SETTINGS_MODAL_ID} .gbs-pool-color-picker { width: 40px; height: 30px; cursor: pointer; }
+                    #${Config.SELECTORS.SETTINGS_MODAL_ID} #enhancer-test-creds { padding: 5px 10px; font-size: 0.9em; background-color: #006FFA; border-radius: 3px; font-weight: bold; min-width: 110px; text-align: center; box-sizing: border-box !important; transition: background-color 0.2s ease-in-out; }
+                    #${Config.SELECTORS.SETTINGS_MODAL_ID} .hotkey-input { cursor: pointer; text-align: center; }
+                    #${Config.SELECTORS.SETTINGS_MODAL_ID} .hotkey-input:focus { background-color: #006FFA; color: #000 !important; font-weight: bold; }
+                    .toggle-switch { position: relative; display: inline-block; width: 40px; height: 22px; }
+                    .toggle-switch input { opacity: 0; width: 0; height: 0; }
+                    .toggle-slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: #555; transition: .4s; border-radius: 25px; }
+                    .toggle-slider:before { position: absolute; content: ""; height: 16px; width: 16px; left: 3px; bottom: 3px; background-color: white; transition: .4s; border-radius: 50%; }
+                    input:checked + .toggle-slider { background-color: #006FFA; }
+                    input:checked + .toggle-slider:before { transform: translateX(18px); }
+                `);
+                const modalHTML = `
+                <div id="${Config.SELECTORS.SETTINGS_MODAL_ID}-overlay">
+                    <div id="${Config.SELECTORS.SETTINGS_MODAL_ID}">
+                        <h2>Gelbooru Suite Settings</h2>
+                        <div class="settings-tabs">
+                            <button class="settings-tab-btn active" data-tab="general">General</button>
+                            <button class="settings-tab-btn" data-tab="peek">Previews</button>
+                            <button class="settings-tab-btn" data-tab="pools">Pools</button>
+                            <button class="settings-tab-btn" data-tab="hotkeys">Hotkeys</button>
+                            <button class="settings-tab-btn" data-tab="advanced">Advanced</button>
+                        </div>
+                        <div class="settings-tab-content">
+                            ${this._getGeneralSettingsHTML()}
+                            ${this._getPeekSettingsHTML()}
+                            ${this._getPoolsSettingsHTML()}
+                            ${this._getHotkeysSettingsHTML()}
+                            ${this._getAdvancedSettingsHTML()}
+                        </div>
+                        <div class="footer-container" style="text-align: right; border-top: 1px solid #555; padding-top: 15px; margin-top: 20px;">
+                            <div class="settings-buttons" style="margin-top: 0; border-top: none; padding-top: 0;">
+                                <button id="enhancer-clear-creds">Clear Credentials</button>
+                                <button id="enhancer-save-settings">Save</button>
+                                <button id="enhancer-close-settings">Close</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>`;
+                document.body.insertAdjacentHTML('beforeend', modalHTML);
+                document.getElementById('enhancer-save-settings').addEventListener('click', Settings.save.bind(Settings));
+                document.getElementById('enhancer-clear-creds').addEventListener('click', Settings.clearCredentials.bind(Settings));
+                document.getElementById('enhancer-close-settings').addEventListener('click', this.closeModal);
+                document.getElementById('enhancer-export-settings').addEventListener('click', Settings.export.bind(Settings));
+                document.getElementById('enhancer-import-settings').addEventListener('click', Settings.import.bind(Settings));
+                document.getElementById('enhancer-test-creds').addEventListener('click', Settings.testCredentials.bind(Settings));
+                document.getElementById(`${Config.SELECTORS.SETTINGS_MODAL_ID}-overlay`).addEventListener('click', (e) => {
+                    if (e.target.id === `${Config.SELECTORS.SETTINGS_MODAL_ID}-overlay`) this.closeModal();
+                });
+                const tabsContainer = document.querySelector(`#${Config.SELECTORS.SETTINGS_MODAL_ID} .settings-tabs`);
+                const panesContainer = document.querySelector(`#${Config.SELECTORS.SETTINGS_MODAL_ID} .settings-tab-content`);
+                tabsContainer.addEventListener('click', (e) => {
+                    if (e.target.matches('.settings-tab-btn')) {
+                        const targetTab = e.target.dataset.tab;
+                        if (tabsContainer.querySelector('.active')) { tabsContainer.querySelector('.active').classList.remove('active'); }
+                        e.target.classList.add('active');
+                        if (panesContainer.querySelector('.active')) { panesContainer.querySelector('.active').classList.remove('active'); }
+                        panesContainer.querySelector(`.settings-tab-pane[data-tab="${targetTab}"]`).classList.add('active');
+                    }
+                });
+                document.querySelectorAll('.hotkey-input').forEach(input => {
+                    const handleKeyDown = (e) => {
+                        e.preventDefault();
+                        let key = e.key;
+                        if (key === ' ') { key = 'Space'; }
+                        input.value = key;
+                        input.blur();
+                    };
+                    const handleFocus = () => {
+                        input.value = 'Press a key...';
+                        input.addEventListener('keydown', handleKeyDown, { once: true });
+                    };
+                    const handleBlur = () => {
+                        if (input.value === 'Press a key...') {
+                            const settingKey = input.id.replace('setting-key-', 'KEY_').toUpperCase().replace(/-/g, '_');
+                            let defaultValue = Settings.State[settingKey] || Config.DEFAULT_SETTINGS[settingKey];
+                            input.value = Utils.formatHotkeyForDisplay(defaultValue);
+                        }
+                        input.removeEventListener('keydown', handleKeyDown);
+                    };
+                    input.addEventListener('focus', handleFocus);
+                    input.addEventListener('blur', handleBlur);
+                });
+            },
+            openModal: function(authError = '') {
+                if (!document.getElementById(Config.SELECTORS.SETTINGS_MODAL_ID)) { this.createModal(); }
+
+                Settings.settingsMap.forEach(setting => {
+                    const element = document.getElementById(setting.id);
+                    if (!element) return;
+
+                    if (setting.type === 'checkbox') {
+                        element.checked = Settings.State[setting.key];
+                    } else {
+                        element.value = Settings.State[setting.key];
+                    }
+                });
+
+                document.getElementById('setting-key-gallery-next').value = Utils.formatHotkeyForDisplay(Settings.State.KEY_GALLERY_NEXT_PAGE);
+                document.getElementById('setting-key-gallery-prev').value = Utils.formatHotkeyForDisplay(Settings.State.KEY_GALLERY_PREV_PAGE);
+                document.getElementById('setting-key-peek-vid-play').value = Utils.formatHotkeyForDisplay(Settings.State.KEY_PEEK_VIDEO_PLAY_PAUSE);
+                document.getElementById('setting-key-peek-vid-fwd').value = Utils.formatHotkeyForDisplay(Settings.State.KEY_PEEK_VIDEO_SEEK_FORWARD);
+                document.getElementById('setting-key-peek-vid-back').value = Utils.formatHotkeyForDisplay(Settings.State.KEY_PEEK_VIDEO_SEEK_BACK);
+                document.getElementById('setting-key-viewer-prev').value = Utils.formatHotkeyForDisplay(Settings.State.KEY_VIEWER_PREV_IMAGE);
+                document.getElementById('setting-key-viewer-next').value = Utils.formatHotkeyForDisplay(Settings.State.KEY_VIEWER_NEXT_IMAGE);
+                document.getElementById('setting-key-viewer-info').value = Utils.formatHotkeyForDisplay(Settings.State.KEY_VIEWER_TOGGLE_INFO);
+
+                document.getElementById('setting-api-key').value = Settings.State.API_KEY;
+                document.getElementById('setting-user-id').value = Settings.State.USER_ID;
+                document.getElementById('setting-download-folder').value = Settings.State.DOWNLOAD_FOLDER;
+
+                const favoritePools = Settings.State.favoritePools || [];
+                for (let i = 0; i < 5; i++) {
+                    const poolNameInput = document.getElementById(`setting-pool-name-${i + 1}`);
+                    const poolIdInput = document.getElementById(`setting-pool-id-${i + 1}`);
+                    const poolColorInput = document.getElementById(`setting-pool-color-${i + 1}`);
+                    if (favoritePools[i]) {
+                        poolNameInput.value = favoritePools[i].name;
+                        poolIdInput.value = favoritePools[i].id;
+                        poolColorInput.value = favoritePools[i].color || '#FFFFFF';
+                    } else {
+                        poolNameInput.value = '';
+                        poolIdInput.value = '';
+                        poolColorInput.value = '#FFFFFF';
+                    }
+                }
+
+                const errorMessageElement = document.getElementById('enhancer-auth-error');
+                if (authError) {
+                    errorMessageElement.textContent = authError;
+                    errorMessageElement.style.display = 'block';
+                    document.querySelector('.settings-tabs .settings-tab-btn[data-tab="advanced"]').click();
+                } else {
+                    errorMessageElement.style.display = 'none';
+                }
+                document.getElementById(`${Config.SELECTORS.SETTINGS_MODAL_ID}-overlay`).style.display = 'flex';
+            },
+            closeModal: function() {
+                const overlay = document.getElementById(`${Config.SELECTORS.SETTINGS_MODAL_ID}-overlay`);
+                if (overlay) overlay.style.display = 'none';
+            },
+        }
+    };
+
+    // =================================================================================
+    // ADVANCED SEARCH MODULE
+    // =================================================================================
+    const AdvancedSearch = {
+        init: function() {
+            const originalInput = document.querySelector(Config.SELECTORS.SEARCH_INPUT);
+            if (!originalInput) return;
+            this.injectStyles();
+            if (originalInput.form) {
+                originalInput.form.classList.add('gbs-search-form');
+            }
+            const { openModal } = this.UI.createModal(originalInput);
+            const advButton = document.createElement('button');
+            advButton.type = 'button';
+            advButton.textContent = 'Tag Editor';
+            advButton.id = 'gbs-advanced-search-btn';
+            advButton.title = 'Open Advanced Tag Editor';
+            const originalSubmitButton = originalInput.form.querySelector('input[name="commit"]');
+            if (originalSubmitButton) {
+                originalSubmitButton.insertAdjacentElement('afterend', advButton);
+            } else {
+                originalInput.insertAdjacentElement('afterend', advButton);
+            }
+            advButton.addEventListener('click', (e) => {
+                e.preventDefault();
+                openModal();
+            });
+        },
+        injectStyles: function() {
+            GM_addStyle(`
+                .gbs-search-form { display: flex; align-items: center; gap: 5px; }
+                .gbs-search-form > p { display: contents; }
+                .gbs-search-form #tags-search { flex-grow: 1; width: auto !important; }
+                .gbs-search-form input[type="submit"] { flex-shrink: 0; }
+                #${Config.SELECTORS.ADVANCED_SEARCH_MODAL_ID}-overlay { display: flex; opacity: 0; pointer-events: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background-color: rgba(0,0,0,0.7); z-index: 100001; justify-content: center; align-items: flex-start; padding-top: 5vh; font-family: sans-serif; }
+                #${Config.SELECTORS.ADVANCED_SEARCH_MODAL_ID} { background-color: #252525; border-radius: 10px; box-shadow: 0 5px 25px rgba(0,0,0,0.5); width: 90%; max-width: 550px; padding: 20px 7px 7px 7px; border: 1px solid #666; height: 80vh; display: flex; flex-direction: column; }
+                .gbs-search-title { margin-bottom: 10px; padding-bottom: 10px; color: #eee; text-align: center; flex-shrink: 0; font-family: verdana, helvetica; }
+                .gbs-input-wrapper { position: relative; flex-shrink: 0; }
+                #gbs-tag-input { width: 100%; box-sizing: border-box; background: #333; border: 1px solid #555; padding-left: 40px !important; padding: 10px; border-radius: 10px; font-size: 1em; color: #eee; }
+                .gbs-suggestion-container { position: absolute; top: 100%; left: 0; right: 0; background-color: #1F1F1F; border: 1px solid #555; border-top: none; z-index: 100002; max-height: 200px; overflow-y: auto; display: none; box-shadow: 0 4px 6px rgba(0,0,0,0.2); }
+                .gbs-suggestion-item { font-size: 1.08em; padding: 3px 10px; cursor: pointer; display: flex; justify-content: space-between; align-items: center; color: #ddd; }
+                .gbs-suggestion-item:hover { background-color: #E6E6FA; }
+                .gbs-suggestion-label { display: flex; align-items: center; gap: 8px; }
+                .gbs-suggestion-category { font-size: 0.8em; color: #999; text-transform: capitalize; }
+                .gbs-suggestion-count { font-size: 0.9em; }
+                #gbs-category-sections-wrapper { overflow-y: auto; margin-top: 15px; padding-right: 15px; flex-grow: 1; min-height: 80px;  }
+                .gbs-category-section { margin-bottom: 10px; }
+                .gbs-category-title { color: #eee; margin: 0 0 8px 0; padding-bottom: 4px; border-bottom: 2px solid; font-size: 1em; text-transform: capitalize; }
+                .gbs-pill-container { display: flex; flex-wrap: wrap; gap: 6px; padding: 10px 0; min-height: 20px; }
+                .gbs-tag-pill { display: inline-flex; align-items: center; color: white; padding: 5px 10px; border-radius: 10px; font-size: 0.9em; font-weight: bold; text-shadow: 1px 1px 3px rgba(0,0,0,0.9); }
+                .gbs-remove-tag-btn { margin-left: 8px; cursor: pointer; font-style: normal; font-weight: bold; line-height: 1; padding: 2px; font-size: 1.2em; opacity: 0.7; }
+                .gbs-remove-tag-btn:hover { opacity: 1; }
+                .gbs-modal-actions { display: inline-flex; justify-content: flex-end; gap: 10px; margin-top: 15px; border-top: 1px solid #555; padding-top: 15px; flex-shrink: 0; }
+                .gbs-modal-button, .gbs-modal-button-primary { padding: 8px 12px; border:none; border-radius: 10px; cursor: pointer; font-weight: bold; }
+                #gbs-blacklist-toggle { min-width: 145px; text-align: center; }
+                .gbs-modal-button { background-color: #444; color: #fff;  }
+                .gbs-modal-button-primary { background-color: #006FFA; color: white; }
+                #gbs-advanced-search-btn { margin-left: 0px; padding: 7px 15px; vertical-align: top; cursor: pointer; background: #333333; color: #EEEEEE; border: 1px solid #555555; font-weight: bold; }
+                #gbs-advanced-search-btn:hover { background: #555; }
+                .gbs-modifiers-section { margin-top: 15px; padding: 10px; background-color: rgba(0,0,0,0.2); border-radius: 10px; border: 1px solid #555; }
+                .gbs-modifiers-title { margin: 0 0 12px 0; font-size: 1em; color: #ccc; border-bottom: 1px solid #555; padding-bottom: 5px; }
+                .gbs-modifier-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+                .gbs-modifier-row label { font-weight: bold; color: #ddd; flex-basis: 30%; }
+                .gbs-modifier-row select, .gbs-modifier-row input { flex-grow: 1; background: #333; border: 1px solid #555; padding: 5px; border-radius: 10px; color: #eee; width: 110px; }
+                .gbs-score-group { display: flex; gap: 5px; flex-grow: 1; }
+                .gbs-score-group select { width: 60px; flex-grow: 0; }
+                #gbs-saved-searches-toggle-btn { position: absolute; left: 5px; top: 50%; transform: translateY(-50%); cursor: pointer; transition: color 0.2s; font-size: 1.8em }
+                #gbs-saved-searches-toggle-btn:hover,
+                #gbs-saved-searches-toggle-btn.active { color: #daa520 !important; }
+                #gbs-modifiers-toggle-btn { position: absolute; right: 5px; top: 50%; transform: translateY(-50%); cursor: pointer; transition: color 0.2s; font-size: 1.8em; }
+                #gbs-modifiers-toggle-btn:hover,
+                #gbs-modifiers-toggle-btn.active { color: #006FFA !important; }
+                #gbs-modifiers-panel.hidden { display: none; }
+                #gbs-saved-searches-panel { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; max-height: 20vh; overflow-y: auto; }
+                #gbs-saved-searches-panel.hidden { display: none; }
+                .gbs-modal-saved-search { background-color: #4a4a4a; color: #ddd; padding: 4px 8px; border-radius: 10px; font-size: 1em; cursor: pointer; transition: background-color .2s, border-color .2s; user-select: none; text-shadow: 1px 1px 3px rgba(0,0,0,0.9); }
+                .gbs-modal-saved-search:hover { background-color: #daa520; border-color: #daa520; color: white; }
+            `);
+        },
+        UI: {
+            createModal: function(originalInput) {
+                if (document.getElementById(Config.SELECTORS.ADVANCED_SEARCH_MODAL_ID)) return;
+                const modalOverlay = document.createElement('div');
+                modalOverlay.id = `${Config.SELECTORS.ADVANCED_SEARCH_MODAL_ID}-overlay`;
+
+                const modalPanel = document.createElement('div');
+                modalPanel.id = Config.SELECTORS.ADVANCED_SEARCH_MODAL_ID;
+                let categorySectionsHTML = `
+                    <div class="gbs-category-section" id="gbs-section-main">
+                        <h4 class="gbs-category-title" style="border-color: #006FFA">Tags</h4>
+                        <div class="gbs-pill-container" id="gbs-pill-container-main"></div>
+                    </div>
+                    <div class="gbs-category-section" id="gbs-section-excluded">
+                        <h4 class="gbs-category-title" style="border-color: ${Config.COLORS_CONSTANTS.excluded}">Excluded</h4>
+                        <div class="gbs-pill-container" id="gbs-pill-container-excluded"></div>
+                    </div>
+                `;
+                modalPanel.innerHTML = `
+                    <h2 class="gbs-search-title">Advanced Tag Editor</h2>
+                    <div class="gbs-input-wrapper">
+                        <input type="text" id="gbs-tag-input" placeholder="Use '-' to exclude. Press space for '_'.">
+                        <i class="fas fa-star" id="gbs-saved-searches-toggle-btn" title="Show Saved Searches"></i>
+                        <i class="fas fa-cog" id="gbs-modifiers-toggle-btn" title="Show Search Modifiers"></i>
+                        <div class="gbs-suggestion-container" id="gbs-main-suggestion-container"></div>
+                    </div>
+                    <div id="gbs-saved-searches-panel" class="hidden"></div>
+
+                    <div id="gbs-modifiers-panel" class="gbs-modifiers-section hidden">
+                        <h4 class="gbs-modifiers-title">Search Modifiers</h4>
+                        <div class="gbs-modifier-row">
+                            <label for="gbs-sort-select">Sort By</label>
+                            <select id="gbs-sort-select">
+                                <option value="">Default (ID)</option>
+                                <option value="random">Random</option>
+                                <option value="score">Score (High to Low)</option>
+                                <option value="score:asc">Score (Low to High)</option>
+                                <option value="updated:desc">Updated Date</option>
+                                <option value="id:asc">ID (Ascending)</option>
+                            </select>
+                        </div>
+                        <div class="gbs-modifier-row">
+                            <label for="gbs-rating-select">Rating</label>
+                            <select id="gbs-rating-select">
+                                <option value="">Any</option>
+                                <option value="explicit">Explicit</option>
+                                <option value="questionable">Questionable</option>
+                                <option value="sensitive">Sensitive</option>
+                                <option value="general">General</option>
+                            </select>
+                        </div>
+                        <div class="gbs-modifier-row">
+                             <label for="gbs-score-value">Score</label>
+                             <div class="gbs-score-group">
+                                <select id="gbs-score-operator">
+                                    <option value=">=">≥</option>
+                                    <option value="<=">≤</option>
+                                    <option value=">">&gt;</option>
+                                    <option value="<">&lt;</option>
+                                    <option value="">=</option>
+                                </select>
+                                <input type="number" id="gbs-score-value" placeholder="e.g., 50">
+                             </div>
+                        </div>
+                    </div>
+
+                    <div id="gbs-category-sections-wrapper">${categorySectionsHTML}</div>
+                    <div class="gbs-modal-actions">
+                        <button id="gbs-blacklist-toggle" class="gbs-modal-button" style="margin-right: auto;">Toggle Blacklist</button>
+                        <button id="gbs-search-apply" class="gbs-modal-button-primary">Search</button>
+                        <button id="gbs-search-close" class="gbs-modal-button">Close</button>
+                    </div>
+                `;
+                modalOverlay.appendChild(modalPanel);
+                document.body.appendChild(modalOverlay);
+
+                const tagInput = modalPanel.querySelector('#gbs-tag-input');
+                const suggestionBox = modalPanel.querySelector('#gbs-main-suggestion-container');
+                const applyBtn = modalPanel.querySelector('#gbs-search-apply');
+                const closeBtn = modalPanel.querySelector('#gbs-search-close');
+                const blacklistToggleBtn = modalPanel.querySelector('#gbs-blacklist-toggle');
+
+                const sortSelect = modalPanel.querySelector('#gbs-sort-select');
+                const ratingSelect = modalPanel.querySelector('#gbs-rating-select');
+                const scoreOp = modalPanel.querySelector('#gbs-score-operator');
+                const scoreVal = modalPanel.querySelector('#gbs-score-value');
+
+                let syncToOriginalInput = () => {
+                    const regularPills = modalPanel.querySelectorAll('.gbs-pill-container .gbs-tag-pill');
+                    const regularTags = Array.from(regularPills).map(pill => pill.dataset.value);
+
+                    const modifiers = [];
+                    if (sortSelect.value) {
+                        modifiers.push(`sort:${sortSelect.value}`);
+                    }
+                    if (ratingSelect.value) {
+                        modifiers.push(`rating:${ratingSelect.value}`);
+                    }
+                    if (scoreVal.value) {
+                        modifiers.push(`score:${scoreOp.value}${scoreVal.value}`);
+                    }
+
+                    const allTags = [...modifiers, ...regularTags];
+                    originalInput.value = allTags.join(' ');
+                };
+
+                sortSelect.addEventListener('change', syncToOriginalInput);
+                ratingSelect.addEventListener('change', syncToOriginalInput);
+                scoreOp.addEventListener('change', syncToOriginalInput);
+                scoreVal.addEventListener('input', syncToOriginalInput);
+
+                const parseAndSetModifiers = (tagsArray) => {
+                    const remainingTags = [];
+                    tagsArray.forEach(tag => {
+                        if (tag.startsWith('sort:')) {
+                            sortSelect.value = tag.substring(5);
+                        } else if (tag.startsWith('rating:')) {
+                            ratingSelect.value = tag.substring(7);
+                        } else if (tag.startsWith('score:')) {
+                            const match = tag.match(/score:([><=]*)(\d+)/);
+                            if (match) {
+                                const [, op, val] = match;
+                                scoreOp.value = op || '';
+                                scoreVal.value = val;
+                            }
+                        } else {
+                            remainingTags.push(tag);
+                        }
+                    });
+                    return remainingTags;
+                };
+
+                const updateBlacklistButton = () => {
+                    const blacklistTags = (Settings.State.BLACKLIST_TAGS || '').trim().split(/\s+/).filter(Boolean);
+                    if (blacklistTags.length === 0) {
+                        blacklistToggleBtn.style.display = 'none';
+                        return;
+                    }
+                    blacklistToggleBtn.style.display = '';
+                    const tagsAsPills = Array.from(modalPanel.querySelectorAll('.gbs-tag-pill')).map(pill => pill.dataset.value);
+                    const negativeBlacklistTags = blacklistTags.map(t => `-${t}`);
+                    const areTagsActive = negativeBlacklistTags.every(negTag => tagsAsPills.includes(negTag));
+                    if (areTagsActive) {
+                        blacklistToggleBtn.textContent = 'Remove Blacklist';
+                    } else {
+                        blacklistToggleBtn.textContent = 'Add Blacklist';
+                    }
+                };
+                const _determineTagInfo = async (rawTag) => {
+                    const isNegative = rawTag.startsWith('-');
+                    let processedTag = (isNegative ? rawTag.substring(1) : rawTag).trim();
+                    let category = 'general';
+                    let finalTagName = processedTag;
+
+                    const knownMetadataTags = new Set([
+                        'commentary'
+                    ]);
+
+                    const parts = processedTag.split(':');
+                    if (parts.length > 1 && Object.keys(Config.COLORS_CONSTANTS).includes(parts[0])) {
+                        category = parts[0];
+                        finalTagName = parts.slice(1).join(':');
+                    } else {
+                        category = await API.fetchTagCategory(processedTag);
+                    }
+
+                    if (isNegative) category = 'excluded';
+                    return {
+                        fullValue: (isNegative ? '-' : '') + finalTagName,
+                        tagName: finalTagName,
+                        category: category
+                    };
+                };
+
+                const _createPillElement = (tagInfo) => {
+                    const pill = document.createElement('span');
+                    pill.className = 'gbs-tag-pill';
+                    pill.textContent = tagInfo.tagName.replace(/_/g, ' ');
+                    pill.dataset.value = tagInfo.fullValue;
+                    pill.dataset.category = tagInfo.category;
+                    pill.style.backgroundColor = Config.COLORS_CONSTANTS[tagInfo.category] || '#777';
+
+                    const removeBtn = document.createElement('i');
+                    removeBtn.className = 'gbs-remove-tag-btn';
+                    removeBtn.textContent = '×';
+                    removeBtn.onclick = () => {
+                        pill.remove();
+                        syncToOriginalInput();
+                        updateBlacklistButton();
+                    };
+
+                    pill.appendChild(removeBtn);
+                    return pill;
+                };
+
+                const _sortPills = (container) => {
+                    const order = ['artist', 'character', 'copyright', 'metadata', 'general'];
+                    const pills = Array.from(container.querySelectorAll('.gbs-tag-pill'));
+
+                    pills.sort((a, b) => {
+                        const catA = a.dataset.category;
+                        const catB = b.dataset.category;
+                        const indexA = order.indexOf(catA);
+                        const indexB = order.indexOf(catB);
+                        return indexA - indexB;
+                    });
+
+                    container.innerHTML = '';
+                    pills.forEach(pill => container.appendChild(pill));
+                };
+
+                const addPill = async (rawTag) => {
+                    if (!rawTag || rawTag.trim() === '') return;
+                    const tagInfo = await _determineTagInfo(rawTag.trim());
+                    if (modalPanel.querySelector(`.gbs-tag-pill[data-value="${tagInfo.fullValue}"]`)) {
+                        return;
+                    }
+
+                    const mainPillContainer = modalPanel.querySelector('#gbs-pill-container-main');
+                    const excludedPillContainer = modalPanel.querySelector('#gbs-pill-container-excluded');
+
+                    const pillElement = _createPillElement(tagInfo);
+
+                    if (tagInfo.category === 'excluded') {
+                        excludedPillContainer.appendChild(pillElement);
+                    } else {
+                        mainPillContainer.appendChild(pillElement);
+                        _sortPills(mainPillContainer);
+                    }
+
+                    syncToOriginalInput();
+                    updateBlacklistButton();
+                };
+
+                const toggleBlacklistTags = () => {
+                    const blacklistTags = (Settings.State.BLACKLIST_TAGS || '').trim().split(/\s+/).filter(Boolean);
+                    if (blacklistTags.length === 0) {
+                        alert('Your blacklist is empty. Please add tags in the Suite Settings.');
+                        return;
+                    }
+                    const tagsAsPills = Array.from(modalPanel.querySelectorAll('.gbs-tag-pill'));
+                    const pillValues = tagsAsPills.map(pill => pill.dataset.value);
+                    const negativeBlacklistTags = blacklistTags.map(t => `-${t}`);
+                    const areTagsActive = negativeBlacklistTags.every(negTag => pillValues.includes(negTag));
+                    if (areTagsActive) {
+                        tagsAsPills.forEach(pill => {
+                            if (negativeBlacklistTags.includes(pill.dataset.value)) {
+                                pill.remove();
+                            }
+                        });
+                    } else {
+                        negativeBlacklistTags.forEach(negTag => {
+                            if (!pillValues.includes(negTag)) {
+                                addPill(negTag);
+                            }
+                        });
+                    }
+                    syncToOriginalInput();
+                    updateBlacklistButton();
+                };
+                blacklistToggleBtn.addEventListener('click', toggleBlacklistTags);
+
+                const quickTagsBtn = modalPanel.querySelector('#gbs-saved-searches-toggle-btn');
+                const quickTagsPanel = modalPanel.querySelector('#gbs-saved-searches-panel');
+
+                const _populateQuickTagsPanel = async (forceRefresh = false) => {
+                    quickTagsPanel.innerHTML = '<span style="color: #ccc; font-style: italic;">Loading saved searches...</span>';
+
+                    const renderTags = (searches) => {
+                        quickTagsPanel.innerHTML = '';
+                        if (searches && searches.length > 0) {
+                            const fragment = document.createDocumentFragment();
+                            searches.forEach(tag => {
+                                const tagEl = document.createElement('span');
+                                tagEl.className = 'gbs-modal-saved-search';
+                                tagEl.textContent = tag.replace(/_/g, ' ');
+                                tagEl.dataset.tag = tag;
+                                tagEl.addEventListener('click', () => {
+                                    tag.split(/\s+/).filter(Boolean).forEach(singleTag => addPill(singleTag));
+                                });
+                                fragment.appendChild(tagEl);
+                            });
+                            quickTagsPanel.appendChild(fragment);
+                        } else {
+                            quickTagsPanel.innerHTML = '<span style="color: #A43535;">No saved searches found.</span>';
+                        }
+                        const footer = document.createElement('div');
+                        footer.style.cssText = 'margin-top: 5px; text-align: right;';
+                        const refreshBtn = document.createElement('button');
+                        refreshBtn.innerHTML = 'Update <i class=" fas fa-sync-alt" style="font-size: 0.8em;"></i>';
+                        refreshBtn.style.cssText = 'background: none; border: none; color: #ccc; padding: 0px 10px; cursor: pointer;';
+                        refreshBtn.title = 'Force the list to update. Avoid repeated clicks to prevent overloading the site and triggering temporary blocks.';
+                        refreshBtn.onclick = () => _populateQuickTagsPanel(true);
+                        footer.appendChild(refreshBtn);
+                        quickTagsPanel.appendChild(footer);
+                    };
+
+                    if (!forceRefresh) {
+                        const cachedSearches = await API.fetchSavedSearches();
+                        renderTags(cachedSearches);
+                    } else {
+                        const freshSearches = await API.fetchSavedSearches(true);
+                        renderTags(freshSearches);
+                    }
+                };
+
+                quickTagsBtn.addEventListener('click', () => {
+                    const isOpen = !quickTagsPanel.classList.contains('hidden');
+                    if (isOpen) {
+                        quickTagsPanel.classList.add('hidden');
+                        quickTagsBtn.classList.remove('active');
+                    } else {
+                        quickTagsPanel.classList.remove('hidden');
+                        quickTagsBtn.classList.add('active');
+                        if (!quickTagsPanel.dataset.loaded) {
+                            _populateQuickTagsPanel(false);
+                            quickTagsPanel.dataset.loaded = 'true';
+                        }
+                    }
+                });
+
+                const modifiersToggleBtn = modalPanel.querySelector('#gbs-modifiers-toggle-btn');
+                const modifiersPanel = modalPanel.querySelector('#gbs-modifiers-panel');
+
+                modifiersToggleBtn.addEventListener('click', () => {
+                    modifiersPanel.classList.toggle('hidden');
+                    modifiersToggleBtn.classList.toggle('active', !modifiersPanel.classList.contains('hidden'));
+                });
+
+
+                const openModal = () => {
+                    modalPanel.querySelector('#gbs-pill-container-main').innerHTML = '';
+                    modalPanel.querySelector('#gbs-pill-container-excluded').innerHTML = '';
+
+                    sortSelect.value = '';
+                    ratingSelect.value = '';
+                    scoreOp.value = '>=';
+                    scoreVal.value = '';
+
+                    const allTags = originalInput.value.trim().split(/\s+/).filter(Boolean);
+                    const regularTags = parseAndSetModifiers(allTags);
+                    regularTags.forEach(tag => addPill(tag));
+
+                    _sortPills(modalPanel.querySelector('#gbs-pill-container-main'));
+
+                    modalOverlay.style.opacity = '1';
+                    modalOverlay.style.pointerEvents = 'auto';
+                    tagInput.focus();
+                    updateBlacklistButton();
+                };
+                const closeModal = () => { modalOverlay.style.opacity = '0'; modalOverlay.style.pointerEvents = 'none'; };
+                tagInput.addEventListener('keydown', e => {
+                    if (e.key === ' ') {
+                        e.preventDefault();
+                        tagInput.value += '_';
+                    }
+                    if (e.key === 'Enter') {
+                        e.preventDefault();
+                        const finalTag = tagInput.value.trim().replace(/ /g, '_');
+                        addPill(finalTag);
+                        tagInput.value = '';
+                        suggestionBox.style.display = 'none';
+                    }
+                });
+                tagInput.addEventListener('input', () => {
+                    clearTimeout(GlobalState.searchDebounceTimeout);
+                    const term = tagInput.value.trim();
+                    if (term.length < 2) {
+                        suggestionBox.style.display = 'none';
+                        return;
+                    }
+                    GlobalState.searchDebounceTimeout = setTimeout(async () => {
+                        const suggestions = await API.fetchTagSuggestions(term);
+                        suggestionBox.innerHTML = '';
+                        if (suggestions.length > 0) {
+                            suggestionBox.style.display = 'block';
+
+                            const fragment = document.createDocumentFragment();
+                            suggestions.forEach(sugg => {
+                                const item = document.createElement('div');
+                                item.className = 'gbs-suggestion-item';
+
+                                const labelSpan = document.createElement('span');
+                                labelSpan.className = 'gbs-suggestion-label';
+
+                                const nameSpan = document.createElement('span');
+                                let category = sugg.category === 'tag' ? 'general' : sugg.category;
+                                const color = Config.COLORS_CONSTANTS[category] || Config.COLORS_CONSTANTS.general;
+                                nameSpan.style.color = color;
+                                nameSpan.textContent = sugg.label.replace(/_/g, ' ');
+                                const categorySpan = document.createElement('span');
+                                categorySpan.className = 'gbs-suggestion-category';
+                                categorySpan.textContent = `[${sugg.category}]`;
+
+                                labelSpan.append(nameSpan, categorySpan);
+
+                                const countSpan = document.createElement('span');
+                                countSpan.className = 'gbs-suggestion-count';
+                                countSpan.style.color = color;
+                                countSpan.textContent = parseInt(sugg.post_count).toLocaleString();
+
+                                item.append(labelSpan, countSpan);
+
+                                item.onmousedown = (e) => {
+                                    e.preventDefault();
+                                    e.stopPropagation();
+                                    let tagToAdd = sugg.value;
+                                    if (tagInput.value.trim().startsWith('-')) {
+                                        tagToAdd = '-' + tagToAdd;
+                                    }
+                                    addPill(tagToAdd);
+                                    tagInput.value = '';
+                                    suggestionBox.style.display = 'none';
+                                    tagInput.focus();
+                                };
+                                fragment.appendChild(item);
+                            });
+                            suggestionBox.appendChild(fragment);
+                        } else {
+                            suggestionBox.style.display = 'none';
+                        }
+                    }, 250);
+                });
+
+                closeBtn.addEventListener('click', closeModal);
+                modalOverlay.addEventListener('click', e => { if (e.target === modalOverlay) closeModal(); });
+                applyBtn.addEventListener('click', () => {
+                    syncToOriginalInput();
+                    closeModal();
+                    originalInput.form.submit();
+                });
+                return { openModal };
+            }
+        }
+    };
+
+    // =================================================================================
+    // POST MARKERS MODULE
+    // =================================================================================
+    const PostMarkers = {
+        State: {
+            requestQueue: [],
+            activeRequests: 0,
+            maxConcurrentRequests: 7,
+            cache: {},
+        },
+        async init() {
+            this.injectStyles();
+            await this.loadCache();
+
+            const observer = new MutationObserver((mutations) => {
+                mutations.forEach(mutation => {
+                    mutation.addedNodes.forEach(node => {
+                        if (node.nodeType === 1) {
+                            if (node.matches(Config.SELECTORS.THUMBNAIL_ANCHOR_SELECTOR)) {
+                                this.processThumbnail(node);
+                            }
+                            node.querySelectorAll(Config.SELECTORS.THUMBNAIL_ANCHOR_SELECTOR).forEach(this.processThumbnail.bind(this));
+                        }
+                    });
+                });
+            });
+            observer.observe(document.body, { childList: true, subtree: true });
+
+            document.querySelectorAll(Config.SELECTORS.THUMBNAIL_ANCHOR_SELECTOR).forEach(this.processThumbnail.bind(this));
+            Logger.log("[PostMarkers] Initialized.");
+        },
+        injectStyles() {
+            GM_addStyle(`
+                .thumbnail-preview > a { position: relative !important; }
+                .gbs-pool-marker-container { position: absolute; display: flex; gap: 4px; pointer-events: auto; margin-top: 3px; left: 50%; transform: translateX(-50%); body.gbs-viewer-mode-active & { display: none !important; } }
+                .gbs-pool-marker { width: 12px; height: 5px; border-radius: 10px; border: 2px solid black; box-shadow: 0 0 4px rgba(0,0,0,0.8); cursor: help; }
+                .gbs-favorite-marker { position: absolute; top: 3px; right: 3px; font-size: 14px; color: #daa520; pointer-events: none; padding: 4px 5px; box-shadow: 0 0 4px rgba(0,0,0,0.8); border-radius: 10px; background-color: rgba(37, 37, 37, 0.9); border: 2px solid rgba(37, 37, 37, 0.2); body.gbs-viewer-mode-active & { display: none !important; } }
+            `);
+        },
+        async loadCache() {
+            const cachedData = await GM.getValue(Config.STORAGE_KEYS.POST_MARKER_CACHE, {});
+            const now = Date.now();
+            const cacheDuration = 15 * 60 * 1000; // 15 minutes
+            const prunedCache = {};
+            for (const postId in cachedData) {
+                if (now - cachedData[postId].timestamp < cacheDuration) {
+                    prunedCache[postId] = cachedData[postId];
+                }
+            }
+            this.State.cache = prunedCache;
+            await GM.setValue(Config.STORAGE_KEYS.POST_MARKER_CACHE, this.State.cache);
+            Logger.log("[PostMarkers] Cache loaded and pruned.");
+        },
+        async saveCache() {
+            await GM.setValue(Config.STORAGE_KEYS.POST_MARKER_CACHE, this.State.cache);
+        },
+        async clearCache() {
+            this.State.cache = {};
+            await GM.setValue(Config.STORAGE_KEYS.POST_MARKER_CACHE, {});
+            Logger.log("[PostMarkers] Cache cleared manually.");
+        },
+        processThumbnail(thumbAnchor) {
+            if (thumbAnchor.dataset.postMarkersProcessed) return;
+            thumbAnchor.dataset.postMarkersProcessed = 'true';
+
+            const postId = Utils.getPostId(thumbAnchor.href);
+            if (!postId) return;
+
+            if (this.State.cache[postId]) {
+                this.applyMarkers(thumbAnchor, this.State.cache[postId].data);
+                return;
+            }
+
+            this.State.requestQueue.push({ postId, thumbAnchor });
+            this.processQueue();
+        },
+        processQueue() {
+            while (this.State.activeRequests < this.State.maxConcurrentRequests && this.State.requestQueue.length > 0) {
+                this.State.activeRequests++;
+                const { postId, thumbAnchor } = this.State.requestQueue.shift();
+                this.fetchPostData(postId, thumbAnchor).finally(() => {
+                    this.State.activeRequests--;
+                    this.processQueue();
+                });
+            }
+        },
+        async fetchPostData(postId, thumbAnchor) {
+            const postPageUrl = `https://gelbooru.com/index.php?page=post&s=view&id=${postId}`;
+            const poolPageUrl = `https://gelbooru.com/index.php?page=pool&s=post-pool-list&id=${postId}`;
+
+            try {
+                const [postPageResponse, poolPageResponse] = await Promise.all([
+                    Utils.makeRequest({ method: "GET", url: postPageUrl }).promise,
+                    Utils.makeRequest({ method: "GET", url: poolPageUrl }).promise,
+                ]);
+
+                const postDoc = new DOMParser().parseFromString(postPageResponse.responseText, "text/html");
+                const isFavorited = !!postDoc.querySelector('a[href*="s=delete"][href*="page=favorites"]');
+
+                const poolDoc = new DOMParser().parseFromString(poolPageResponse.responseText, "text/html");
+                const poolLinks = poolDoc.querySelectorAll('tbody tr a[href*="page=pool&s=show"]');
+                const poolIds = Array.from(poolLinks).map(link => new URL(link.href, poolPageUrl).searchParams.get('id'));
+
+                const data = { isFavorited, poolIds };
+                this.State.cache[postId] = { data: data, timestamp: Date.now() };
+                await this.saveCache();
+
+                this.applyMarkers(thumbAnchor, data);
+            } catch (error) {
+                Logger.error(`[PostMarkers] Failed to fetch data for post ${postId}:`, error);
+            }
+        },
+        applyMarkers(thumbAnchor, data) {
+            // Apply Favorite Marker
+            if (data.isFavorited) {
+                if (!thumbAnchor.querySelector('.gbs-favorite-marker')) {
+                    const favMarker = document.createElement('i');
+                    favMarker.className = 'fas fa-star gbs-favorite-marker';
+                    favMarker.title = 'Favorited';
+                    thumbAnchor.appendChild(favMarker);
+                }
+            }
+
+            // Apply Pool Markers
+            if (data.poolIds && data.poolIds.length > 0 && Settings.State.favoritePools.length > 0) {
+                const favoritePoolMap = new Map(Settings.State.favoritePools.map(p => [p.id, { color: p.color, name: p.name }]));
+                const matchingPools = data.poolIds.filter(id => favoritePoolMap.has(id));
+
+                if (matchingPools.length > 0) {
+                    let container = thumbAnchor.querySelector('.gbs-pool-marker-container');
+                    if (!container) {
+                        container = document.createElement('div');
+                        container.className = 'gbs-pool-marker-container';
+                        thumbAnchor.appendChild(container);
+                    }
+                    container.innerHTML = '';
+
+                    matchingPools.forEach(poolId => {
+                        const poolInfo = favoritePoolMap.get(poolId);
+                        const marker = document.createElement('div');
+                        marker.className = 'gbs-pool-marker';
+                        marker.style.backgroundColor = poolInfo.color;
+                        marker.title = `In pool: ${poolInfo.name}`;
+                        container.appendChild(marker);
+                    });
+                }
+            }
+        }
+    };
+
+    // =================================================================================
+    // PEEK: PREVIEWS MODULE
+    // =================================================================================
+    const Peek = {
+        State: {
+            currentThumb: null,
+            hideTimeout: null,
+            showTimeout: null,
+            dynamicSeekTime: 5,
+            previewElements: null,
+            lastHoveredThumb: null,
+            pendingPreviewRequest: null,
+            thumbnailListenerCleanups: new Map()
+        },
+        init: function() {
+            this.injectStyles();
+            document.querySelectorAll(Config.SELECTORS.THUMBNAIL_GRID_SELECTOR).forEach(this.initializeThumbnailFeatures.bind(this));
+            const observer = new MutationObserver((mutations) => {
+                if (GlobalState.previewsTemporarilyDisabled) return;
+
+                mutations.forEach(mutation => {
+                    mutation.addedNodes.forEach(node => {
+                        if (node.nodeType === 1) {
+                            if (node.matches(Config.SELECTORS.THUMBNAIL_GRID_SELECTOR)) this.initializeThumbnailFeatures(node);
+                            node.querySelectorAll(Config.SELECTORS.THUMBNAIL_GRID_SELECTOR).forEach(this.initializeThumbnailFeatures.bind(this));
+                        }
+                    });
+                    mutation.removedNodes.forEach(node => {
+                        if (node.nodeType === 1) {
+                            if (node.matches(Config.SELECTORS.THUMBNAIL_GRID_SELECTOR)) this.cleanupThumbnailFeatures(node);
+                            node.querySelectorAll(Config.SELECTORS.THUMBNAIL_GRID_SELECTOR).forEach(this.cleanupThumbnailFeatures.bind(this));
+                        }
+                    });
+                });
+            });
+            observer.observe(document.body, { childList: true, subtree: true });
+
+            window.addEventListener('pagehide', this.cleanupAllFeatures.bind(this));
+        },
+        injectStyles: function() {
+            GM_addStyle(`
+                .thumbnail-preview img { border-radius: 10px; }
+                .thumbnail-preview img.gbs-animated-img { box-shadow: 0 0 0 2.5px #C2185B !important; }
+                #${Config.SELECTORS.PREVIEW_CONTAINER_ID} { position: fixed !important; z-index: 99999 !important; opacity: 0; transform: translate(-50%, -50%) scale(1); pointer-events: none; background-color: #000; border-radius: 10px; box-shadow: 0 0 4px 4px rgba(0,0,0,0.6); overflow: hidden; transition: transform 0.35s ease-out, opacity 0s linear 0.35s; }
+                #${Config.SELECTORS.PREVIEW_CONTAINER_ID}:focus { outline: none; }
+                #${Config.SELECTORS.PREVIEW_CONTAINER_ID}.show { opacity: 1; transform: translate(-50%, -50%) scale(${Settings.State.PREVIEW_SCALE_FACTOR}); pointer-events: auto; cursor: pointer; transition: transform 0.35s ease-out, opacity 0.35s ease-out; }
+                .enhancer-layer { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: contain; transition: opacity 0.2s ease-in-out; background-color: transparent; border: none; outline: none; }
+                .enhancer-seekbar-container { position: absolute; bottom: 0; left: 0; width: 100%; height: 20px; display: none; justify-content: center; align-items: center; }
+                #${Config.SELECTORS.PREVIEW_CONTAINER_ID}.video-active .enhancer-seekbar-container { display: flex; }
+                .enhancer-seekbar { opacity: 0; transition: opacity 0.2s ease-out; pointer-events: none; width: 95%; margin: 0; height: 5.5px; -webkit-appearance: none; appearance: none; background: rgba(255,255,255,0.15); outline: none; border-radius: 10px; border: none; }
+                .enhancer-seekbar-container:hover .enhancer-seekbar { opacity: 1; pointer-events: auto; }
+                .enhancer-seekbar::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 8px; height: 8px; background: #fff; cursor: pointer; border-radius: 50%; }
+                .enhancer-seekbar::-moz-range-thumb { width: 9.5px; height: 9.5px; background: #fff; cursor: pointer; border-radius: 50%; border: none; }
+            `);
+        },
+        initializeThumbnailFeatures: function(grid) {
+            if (grid.dataset.enhancerInitialized) return;
+            grid.dataset.enhancerInitialized = 'true';
+
+            Logger.log('Initializing Peek features for grid:', grid);
+
+            if (!this.State.previewElements) {
+                this.UI.createPreviewElement();
+            }
+
+            const thumbnailClickHandler = function(event) {
+                if (Downloader.State.isSelectionModeActive) {
+                    return;
+                }
+
+                event.preventDefault();
+                event.stopPropagation();
+                GM_openInTab(this.href, { active: false, setParent: true });
+            };
+
+            // Decorate thumbnails (e.g., for animated gifs)
+            grid.querySelectorAll(Config.SELECTORS.THUMBNAIL_ANCHOR_SELECTOR).forEach(thumbLink => {
+                const img = thumbLink.querySelector('img');
+                if (img) {
+                    const title = img.getAttribute('title') || '';
+                    const isAnimated = title.includes('animated_gif') || title.includes('animated_png');
+                    const isVideo = img.classList.contains('webm');
+                    if (isAnimated && !isVideo) img.classList.add('gbs-animated-img');
+                }
+                thumbLink.addEventListener('click', thumbnailClickHandler, { capture: true });
+            });
+
+            // Strip titles to prevent native tooltips from conflicting with Peek
+            grid.querySelectorAll('[title]').forEach(el => el.removeAttribute('title'));
+            const stripTitleHandler = e => {
+                const el = e.target.closest('[title]');
+                if (el) el.removeAttribute('title');
+            };
+            grid.addEventListener('mouseover', stripTitleHandler, true);
+
+            const observer = new MutationObserver(mutations => {
+                for (const mutation of mutations) {
+                    if (mutation.type === 'attributes' && mutation.attributeName === 'title') {
+                        mutation.target.removeAttribute('title');
+                    } else if (mutation.type === 'childList') {
+                        mutation.addedNodes.forEach(node => {
+                            if (node.nodeType === 1) {
+                                if (node.hasAttribute?.('title')) node.removeAttribute('title');
+                                node.querySelectorAll?.('[title]').forEach(el => el.removeAttribute('title'));
+                            }
+                        });
+                    }
+                }
+            });
+            observer.observe(grid, { subtree: true, childList: true, attributes: true, attributeFilter: ['title'] });
+
+            grid.gbsThumbnailClickHandler = thumbnailClickHandler;
+
+            const cleanup = this.UI.setupThumbnailEventListeners(grid);
+            this.State.thumbnailListenerCleanups.set(grid, {
+                cleanupFunc: () => cleanup(stripTitleHandler),
+                observer
+            });
+        },
+        cleanupThumbnailFeatures: function(grid) {
+            if (!grid.dataset.enhancerInitialized) return;
+            Logger.log('Cleaning up Peek features for grid:', grid);
+
+            if (grid.gbsThumbnailClickHandler) {
+                grid.querySelectorAll(Config.SELECTORS.THUMBNAIL_ANCHOR_SELECTOR).forEach(thumbLink => {
+                    thumbLink.removeEventListener('click', grid.gbsThumbnailClickHandler, { capture: true });
+                });
+                delete grid.gbsThumbnailClickHandler;
+            }
+
+            const cleanupData = this.State.thumbnailListenerCleanups.get(grid);
+            if (cleanupData) {
+                cleanupData.cleanupFunc();
+                cleanupData.observer.disconnect();
+                this.State.thumbnailListenerCleanups.delete(grid);
+            }
+
+            if (this.State.thumbnailListenerCleanups.size === 0) {
+                this.UI.destroyPreviewElement();
+            }
+            delete grid.dataset.enhancerInitialized;
+        },
+        cleanupAllFeatures: function() {
+            Logger.log('Page is hiding. Cleaning up all residual Peek features.');
+            for (const grid of this.State.thumbnailListenerCleanups.keys()) {
+                this.cleanupThumbnailFeatures(grid);
+            }
+        },
+        UI: {
+            createPreviewElement: function() {
+                const previewContainer = document.createElement('div');
+                previewContainer.id = Config.SELECTORS.PREVIEW_CONTAINER_ID;
+                previewContainer.setAttribute('tabindex', '-1');
+                previewContainer.innerHTML = `<img class="enhancer-layer low-res-img"><img class="enhancer-layer high-res-img"><video class="enhancer-layer video-layer" playsinline></video><div class="enhancer-error-message"></div><div class="enhancer-seekbar-container"><input type="range" class="enhancer-seekbar" value="0" step="0.1"></div>`;
+                document.body.appendChild(previewContainer);
+
+                const elements = {
+                    previewContainer,
+                    lowResImg: previewContainer.querySelector('.low-res-img'),
+                    highResImg: previewContainer.querySelector('.high-res-img'),
+                    videoLayer: previewContainer.querySelector('.video-layer'),
+                    errorMessage: previewContainer.querySelector('.enhancer-error-message'),
+                    seekBarContainer: previewContainer.querySelector('.enhancer-seekbar-container'),
+                    seekBar: previewContainer.querySelector('.enhancer-seekbar'),
+                    handlers: {}
+                };
+                Peek.State.previewElements = elements;
+                return elements;
+            },
+            destroyPreviewElement: function() {
+                if (!Peek.State.previewElements) return;
+                Logger.log('Destroying Peek Preview element and its listeners.');
+
+                if (Peek.State.pendingPreviewRequest) {
+                    Peek.State.pendingPreviewRequest.abort();
+                    Peek.State.pendingPreviewRequest = null;
+                }
+
+                const { previewContainer, handlers } = Peek.State.previewElements;
+                previewContainer.removeEventListener('mouseenter', handlers.stopHideTimer);
+                previewContainer.removeEventListener('mouseleave', handlers.startHideTimer);
+                previewContainer.removeEventListener('click', handlers.handlePreviewClick);
+                previewContainer.removeEventListener('keydown', handlers.handlePreviewKeyDown);
+                Peek.State.previewElements.videoLayer.removeEventListener('timeupdate', handlers.handleVideoTimeUpdate);
+                Peek.State.previewElements.seekBar.removeEventListener('input', handlers.handleSeekBarInput);
+                Peek.State.previewElements.seekBarContainer.removeEventListener('click', handlers.handleSeekBarContainerClick);
+                window.removeEventListener('scroll', handlers.handleInstantHideOnScroll);
+                if (previewContainer) {
+                    previewContainer.remove();
+                }
+
+                Peek.State.previewElements = null;
+            },
+            hidePreview: function() {
+                if (!Peek.State.previewElements) return;
+                if (Peek.State.pendingPreviewRequest) {
+                    Peek.State.pendingPreviewRequest.abort();
+                    Peek.State.pendingPreviewRequest = null;
+                }
+
+                const { previewContainer, videoLayer } = Peek.State.previewElements;
+                videoLayer.pause();
+                videoLayer.removeAttribute('src');
+                videoLayer.load();
+                previewContainer.classList.remove('show', 'video-active', 'error', 'loading');
+                previewContainer.blur();
+                Peek.State.currentThumb = null;
+            },
+            updatePreviewPositionAndSize: function(thumb, previewContainer) {
+                const clamp = (value, min, max) => Math.min(Math.max(value, min), max);
+                const thumbImg = thumb.querySelector('img');
+                if (!thumbImg) return;
+                const thumbRect = thumb.getBoundingClientRect();
+                const initialWidth = thumbRect.width;
+                const initialHeight = thumbRect.height;
+                const finalWidth = initialWidth * Settings.State.PREVIEW_SCALE_FACTOR;
+                const finalHeight = initialHeight * Settings.State.PREVIEW_SCALE_FACTOR;
+                const margin = 10;
+                const rect = thumb.getBoundingClientRect();
+                let idealTop = rect.top + (rect.height / 2);
+                let idealLeft = rect.left + (rect.width / 2);
+                idealLeft = clamp(idealLeft, finalWidth / 2 + margin, window.innerWidth - finalWidth / 2 - margin);
+                idealTop = clamp(idealTop, finalHeight / 2 + margin, window.innerHeight - finalHeight / 2 - margin);
+                Object.assign(previewContainer.style, {
+                    width: `${initialWidth}px`,
+                    height: `${initialHeight}px`,
+                    top: `${idealTop}px`,
+                    left: `${idealLeft}px`
+                });
+            },
+            showPreview: async function(thumb) {
+                if (!Peek.State.previewElements) return;
+                if (Peek.State.pendingPreviewRequest) {
+                    Peek.State.pendingPreviewRequest.abort();
+                    Peek.State.pendingPreviewRequest = null;
+                }
+
+                Peek.State.currentThumb = thumb;
+                const { previewContainer, lowResImg, highResImg, videoLayer, errorMessage } = Peek.State.previewElements;
+                const thumbImg = thumb.querySelector('img');
+                if (!thumbImg) return;
+                previewContainer.className = '';
+                errorMessage.textContent = '';
+
+                requestAnimationFrame(() => {
+                    this.updatePreviewPositionAndSize(thumb, previewContainer);
+                });
+                lowResImg.src = thumbImg.src;
+                lowResImg.style.opacity = '1';
+                highResImg.src = "";
+                highResImg.style.display = 'none';
+                highResImg.style.opacity = '0';
+                videoLayer.style.opacity = '0';
+                videoLayer.pause();
+                previewContainer.classList.add('show');
+                if (Settings.State.PREVIEW_QUALITY === 'low') return;
+
+                previewContainer.classList.add('loading');
+                try {
+                    const postId = Utils.getPostId(thumb.href);
+                    const media = await API.fetchMediaDetails(postId);
+
+                    if (Peek.State.currentThumb !== thumb) return;
+
+                    previewContainer.classList.remove('loading');
+                    if (media.type === 'video') {
+                        videoLayer.src = media.url;
+                        videoLayer.loop = Settings.State.PREVIEW_VIDEOS_LOOP;
+                        videoLayer.muted = Settings.State.PREVIEW_VIDEOS_MUTED;
+                        videoLayer.play().catch(() => {});
+                        videoLayer.onloadedmetadata = () => {
+                            if (Peek.State.currentThumb === thumb) {
+                                const seekStep = videoLayer.duration * 0.05;
+                                Peek.State.dynamicSeekTime = Math.max(1, Math.min(seekStep, 10));
+                                videoLayer.style.opacity = '1';
+                                previewContainer.classList.add('video-active');
+                                previewContainer.focus();
+                            }
+                        };
+                    } else {
+                        highResImg.src = media.url;
+                        highResImg.onload = () => {
+                            if (Peek.State.currentThumb === thumb) {
+                                highResImg.style.display = 'block';
+                                highResImg.style.opacity = '1';
+                            }
+                        };
+                    }
+                } catch (error) {
+                    if (error.message.includes('abort')) return;
+                    if (Peek.State.currentThumb === thumb) {
+                        previewContainer.classList.remove('loading');
+                        previewContainer.classList.add('error');
+                        errorMessage.textContent = error.message;
+                    }
+                }
+            },
+            setupThumbnailEventListeners: function(thumbnailGrid) {
+                if (!Peek.State.previewElements) return () => {};
+                const self = Peek; // Reference to the Peek module
+                const { handlers, previewContainer, videoLayer, seekBarContainer, seekBar } = self.State.previewElements;
+                handlers.handleInstantHideOnScroll = () => {
+                    if (!self.State.previewElements?.previewContainer || !self.State.currentThumb) { return; }
+                    const { previewContainer } = self.State.previewElements;
+                    previewContainer.style.transition = 'none';
+                    self.UI.hidePreview();
+                    setTimeout(() => {
+                        if (previewContainer) { previewContainer.style.transition = ''; }
+                    }, 50);
+                };
+                handlers.startHideTimer = () => {
+                    clearTimeout(self.State.showTimeout);
+                    clearTimeout(self.State.hideTimeout);
+                    self.State.hideTimeout = setTimeout(() => self.UI.hidePreview(), Settings.State.HIDE_DELAY);
+                };
+                handlers.stopHideTimer = () => { clearTimeout(self.State.hideTimeout); };
+                handlers.handleGridMouseOver = (e) => {
+                    const thumb = e.target.closest(Config.SELECTORS.THUMBNAIL_ANCHOR_SELECTOR);
+                    if (thumb) {
+                        handlers.stopHideTimer();
+                        if (self.State.lastHoveredThumb && self.State.lastHoveredThumb !== thumb) {
+                            const oldTitle = self.State.lastHoveredThumb.dataset.originalTitle;
+                            if (oldTitle) self.State.lastHoveredThumb.setAttribute('title', oldTitle);
+                        }
+                        if (thumb.hasAttribute('title')) {
+                            thumb.dataset.originalTitle = thumb.getAttribute('title');
+                            thumb.removeAttribute('title');
+                        }
+                        self.State.lastHoveredThumb = thumb;
+                        if (self.State.currentThumb !== thumb) {
+                            if (self.State.currentThumb) self.UI.hidePreview();
+                            self.State.showTimeout = setTimeout(() => self.UI.showPreview(thumb), Settings.State.SHOW_DELAY);
+                        }
+                    } else if (!previewContainer.matches(':hover')) {
+                        handlers.startHideTimer();
+                    }
+                };
+                handlers.handleGridMouseLeave = () => {
+                    if (self.State.lastHoveredThumb) {
+                        const oldTitle = self.State.lastHoveredThumb.dataset.originalTitle;
+                        if (oldTitle) self.State.lastHoveredThumb.setAttribute('title', oldTitle);
+                        self.State.lastHoveredThumb = null;
+                    }
+                    handlers.startHideTimer();
+                };
+                handlers.handlePreviewClick = () => { if (self.State.currentThumb?.href) GM_openInTab(self.State.currentThumb.href, { active: false, setParent: true }); };
+                handlers.handlePreviewKeyDown = e => {
+                    if (self.State.currentThumb && videoLayer.style.opacity === '1') {
+                        const hotkeys = [Settings.State.KEY_PEEK_VIDEO_SEEK_BACK, Settings.State.KEY_PEEK_VIDEO_SEEK_FORWARD, Settings.State.KEY_PEEK_VIDEO_PLAY_PAUSE];
+                        if (hotkeys.includes(e.key)) e.preventDefault();
+                        if (e.key === Settings.State.KEY_PEEK_VIDEO_SEEK_BACK) videoLayer.currentTime -= self.State.dynamicSeekTime;
+                        else if (e.key === Settings.State.KEY_PEEK_VIDEO_SEEK_FORWARD) videoLayer.currentTime += self.State.dynamicSeekTime;
+                        else if (e.key === Settings.State.KEY_PEEK_VIDEO_PLAY_PAUSE) videoLayer.paused ? videoLayer.play() : videoLayer.pause();
+                    }
+                };
+                handlers.handleVideoTimeUpdate = () => {
+                    if (videoLayer.duration) {
+                        if (seekBar.max != videoLayer.duration) seekBar.max = videoLayer.duration;
+                        seekBar.value = videoLayer.currentTime;
+                    }
+                };
+                handlers.handleSeekBarInput = e => { e.stopPropagation(); videoLayer.currentTime = seekBar.value; };
+                handlers.handleSeekBarContainerClick = e => e.stopPropagation();
+                thumbnailGrid.addEventListener('mouseover', handlers.handleGridMouseOver);
+                thumbnailGrid.addEventListener('mouseleave', handlers.handleGridMouseLeave);
+                previewContainer.addEventListener('mouseenter', handlers.stopHideTimer);
+                previewContainer.addEventListener('mouseleave', handlers.startHideTimer);
+                previewContainer.addEventListener('click', handlers.handlePreviewClick);
+                previewContainer.addEventListener('keydown', handlers.handlePreviewKeyDown);
+                videoLayer.addEventListener('timeupdate', handlers.handleVideoTimeUpdate);
+                seekBar.addEventListener('input', handlers.handleSeekBarInput);
+                seekBarContainer.addEventListener('click', handlers.handleSeekBarContainerClick);
+                window.addEventListener('scroll', handlers.handleInstantHideOnScroll, { passive: true });
+                return (stripTitleHandler) => {
+                    Logger.log(`Cleaning up event listeners for grid:`, thumbnailGrid);
+                    thumbnailGrid.removeEventListener('mouseover', handlers.handleGridMouseOver);
+                    thumbnailGrid.removeEventListener('mouseleave', handlers.handleGridMouseLeave);
+                    thumbnailGrid.removeEventListener('mouseover', stripTitleHandler, true);
+                };
+            },
+        }
+    };
+
+    // =================================================================================
+    // DOWNLOADER MODULE
+    // =================================================================================
+    const Downloader = {
+        State: {
+            isSelectionModeActive: false,
+            isDownloading: false,
+            isCancelled: false,
+            downloadQueue: new Set(),
+            processingQueue: [],
+            failedDownloads: new Set(),
+            downloadStatus: new Map()
+        },
+
+        // --- Session Management ---
+        resetState: function() {
+            this.State.isDownloading = false;
+            this.State.isCancelled = false;
+            this.State.processingQueue = [];
+            this.State.failedDownloads.clear();
+            this.State.downloadStatus.clear();
+        },
+
+        // --- Core Download Logic ---
+        downloadSinglePost: async function(thumbAnchor) {
+            const pId = Utils.getPostId(thumbAnchor.href);
+            if (this.State.downloadQueue.has(pId)) return;
+            this.State.downloadQueue.add(pId);
+            this.State.downloadStatus.set(pId, 'downloading');
+
+            const { progressOverlay, circleFG, circumference } = this.UI.createProgressCircle();
+            thumbAnchor.appendChild(progressOverlay);
+
+            try {
+                this.UI.updateThumbnailFeedback(thumbAnchor, 'downloading');
+                await new Promise(r => setTimeout(r, 150));
+                if (this.State.isCancelled) throw new Error('Cancelled before start');
+
+                const media = await API.fetchMediaDetails(pId);
+                const ext = new URL(media.url).pathname.split('.').pop() || 'jpg';
+                const filename = `${Settings.State.DOWNLOAD_FOLDER}/post_${pId}.${ext}`;
+
+                const { promise } = Utils.makeRequest({
+                    method: "HEAD",
+                    timeout: 15000,
+                    url: media.url,
+                });
+                const headResponse = await promise;
+                const headers = headResponse.responseHeaders;
+
+                const totalSizeMatch = headers.match(/content-length:\s*(\d+)/i);
+                const totalSize = totalSizeMatch ? parseInt(totalSizeMatch[1], 10) : 0;
+                if (totalSize === 0) throw new Error('Could not determine file size.');
+
+                await new Promise((resolve, reject) => {
+                    GM_download({
+                        url: media.url,
+                        name: filename,
+                        onprogress: (progress) => {
+                            if (this.State.isCancelled) {
+                                return reject(new Error('Cancelled during download'));
+                            }
+                            const percentComplete = progress.loaded / totalSize;
+                            const offset = circumference * (1 - percentComplete);
+                            circleFG.style.strokeDashoffset = offset;
+                        },
+                        onload: () => {
+                            if (this.State.isCancelled) return reject(new Error('Cancelled on complete'));
+                            this.UI.updateThumbnailFeedback(thumbAnchor, 'success');
+                            this.State.downloadStatus.set(pId, 'success');
+                            resolve();
+                        },
+                        onerror: (err) => reject(err),
+                        ontimeout: () => reject(new Error('Timeout'))
+                    });
+                });
+            } catch (er) {
+                if (er.message && er.message.toLowerCase().includes('cancelled')) {
+                    this.UI.updateThumbnailFeedback(thumbAnchor, null);
+                    this.State.downloadStatus.set(pId, 'cancelled');
+                    Logger.log(`Download for post ${pId} cancelled.`);
+                } else {
+                    this.UI.updateThumbnailFeedback(thumbAnchor, 'error');
+                    this.State.downloadStatus.set(pId, 'error');
+                    Logger.error(`Download failed for post ID ${pId}:`, er);
+                    this.State.failedDownloads.add(pId);
+                }
+                throw er;
+            } finally {
+                progressOverlay.remove();
+                this.State.downloadQueue.delete(pId);
+            }
+        },
+        downloadWithRetries: async function(thumb, maxAttempts = 3) {
+            let lastError = null;
+            for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+                try {
+                    await this.downloadSinglePost(thumb);
+                    return;
+                } catch (err) {
+                    lastError = err;
+                    if (err.message && err.message.toLowerCase().includes('cancelled')) {
+                        throw err;
+                    }
+                    Logger.warn(`Download attempt ${attempt}/${maxAttempts} failed for post ${Utils.getPostId(thumb.href)}.`);
+                    if (attempt < maxAttempts) {
+                        await new Promise(r => setTimeout(r, 2000 * attempt));
+                    }
+                }
+            }
+            throw lastError;
+        },
+        startDownloadAllProcess: async function() {
+            if (this.State.isDownloading) {
+                this.State.isCancelled = true;
+                const btn = document.getElementById('gbs-fab-download-all');
+                if (btn) {
+                    btn.querySelector('.gbs-fab-text').textContent = 'Cancelling...';
+                    btn.disabled = true;
+                }
+                return;
+            }
+
+            const allThumbs = Array.from(document.querySelectorAll(Config.SELECTORS.MEDIA_VIEWER_THUMBNAIL_ANCHOR));
+            if (allThumbs.length === 0) {
+                Logger.warn('No items on the page to download.');
+                return;
+            }
+
+            const blocker = document.createElement('div');
+            blocker.id = 'gbs-page-blocker';
+            document.body.appendChild(blocker);
+            setTimeout(() => { blocker.style.opacity = '1'; }, 10);
+
+            this.resetState();
+
+            this.State.isDownloading = true;
+            this.State.isCancelled = false;
+            document.getElementById('gbs-fab-select').disabled = true;
+            this.UI.updateDownloadAllButton(true);
+            this.UI.toggleMenuTriggerCursor(true);
+            this.UI.showProgressBar(true);
+            this.UI.updateProgressBar(0, 0, allThumbs.length);
+            this.UI.resetThumbnailsFeedback();
+
+            this.State.processingQueue = [...allThumbs];
+            Logger.log(`Starting download for ${allThumbs.length} posts.`);
+
+            let s = 0, e = 0;
+            const t = allThumbs.length;
+            const MAX_CONCURRENCY = 6;
+            this.UI.updateProgressBar(s, e, t);
+
+            const processQueue = async () => {
+                while (this.State.processingQueue.length > 0 && !this.State.isCancelled) {
+                    const thumb = this.State.processingQueue.shift();
+                    try {
+                        await this.downloadWithRetries(thumb);
+                        s++;
+                    } catch(err) {
+                        if (!err.message?.toLowerCase().includes('cancelled')) {
+                            e++;
+                        }
+                    } finally {
+                        this.UI.updateProgressBar(s, e, t);
+                        await new Promise(r => setTimeout(r, 300 + Math.random() * 500));
+                    }
+                }
+            };
+
+            const workers = Array.from({ length: Math.min(MAX_CONCURRENCY, this.State.processingQueue.length) }, processQueue);
+            await Promise.allSettled(workers);
+            this.finishDownloadProcess(s, e, t);
+        },
+        finishDownloadProcess: function(s, e, t) {
+            const blocker = document.getElementById('gbs-page-blocker');
+            if (blocker) blocker.remove();
+
+            if (this.State.isCancelled) {
+                Logger.log('Download process cancelled by user.');
+            } else {
+                Logger.log(`Download process completed. Success: ${s}, Errors: ${e}, Total: ${t}`);
+            }
+
+            this.UI.showCompletionModal(Array.from(this.State.failedDownloads));
+            this.UI.toggleActionButtons(true);
+            document.getElementById('gbs-fab-download-all').disabled = false;
+            this.UI.updateDownloadAllButton(false);
+            this.UI.toggleMenuTriggerCursor(false);
+            this.UI.showProgressBar(false);
+            this.resetState();
+        },
+        UI: {
+            toggleActionButtons: (enable) => {
+                document.getElementById('gbs-fab-select').disabled = !enable;
+                document.getElementById('gbs-fab-download-all').disabled = !enable;
+            },
+            showProgressBar: (show) => {
+                const el = document.getElementById('gbs-progress-bar-container');
+                if (el) {
+                    el.style.display = show ? 'flex' : 'none';
+                    if (show) Downloader.UI.updateProgressBar(0, 0, 1);
+                }
+            },
+            updateProgressBar: (s, e, t) => {
+                const p = t > 0 ? ((s + e) / t) * 100 : 0;
+                const fill = document.querySelector('#gbs-progress-bar-container .gbs-progress-bar-fill');
+                const text = document.querySelector('#gbs-progress-bar-container .gbs-progress-bar-text');
+                if (!fill || !text) return;
+                fill.style.width = `${p}%`;
+                if (e > 0) {
+                    fill.style.backgroundColor = '#A43535';
+                    text.textContent = `Downloading... (${s}/${t-e}) (Errors: ${e})`;
+                } else {
+                    fill.style.backgroundColor = '#008450';
+                    text.textContent = `Downloading... (${s}/${t})`;
+                }
+            },
+            updateDownloadAllButton: (isDownloading) => {
+                const btn = document.getElementById('gbs-fab-download-all');
+                if (!btn) return;
+                const btnText = btn.querySelector('.gbs-fab-text');
+                if (isDownloading) {
+                    btnText.textContent = 'Cancel';
+                    btn.classList.add('gbs-btn-cancel');
+                } else {
+                    btnText.textContent = 'Download All';
+                    btn.classList.remove('gbs-btn-cancel');
+                }
+            },
+            updateThumbnailFeedback: (thumb, status) => {
+                if (thumb) {
+                    thumb.classList.remove('gbs-thumb-selected', 'gbs-thumb-success', 'gbs-thumb-error', 'gbs-thumb-downloading');
+                    if (status) thumb.classList.add(`gbs-thumb-${status}`);
+                }
+            },
+            resetThumbnailsFeedback: () => {
+                document.querySelectorAll('.gbs-thumb-success, .gbs-thumb-error, .gbs-thumb-selected, .gbs-thumb-downloading').forEach(el => {
+                    el.classList.remove('gbs-thumb-success', 'gbs-thumb-error', 'gbs-thumb-selected', 'gbs-thumb-downloading');
+                });
+            },
+            toggleMenuTriggerCursor: (isBlocked) => {
+                document.getElementById('gbs-downloader-trigger')?.classList.toggle('is-blocked', isBlocked);
+            },
+            createProgressCircle: function() {
+                const svgNS = "http://www.w3.org/2000/svg";
+                const progressOverlay = document.createElement('div');
+                progressOverlay.className = 'gbs-progress-overlay';
+                const svg = document.createElementNS(svgNS, 'svg');
+                svg.setAttribute('viewBox', '0 0 50 50');
+                svg.style.width = '60%'; svg.style.height = '60%';
+                const circleBG = document.createElementNS(svgNS, 'circle');
+                circleBG.setAttribute('cx', '25'); circleBG.setAttribute('cy', '25'); circleBG.setAttribute('r', '20'); circleBG.setAttribute('fill', 'transparent'); circleBG.setAttribute('stroke-width', '5');
+                circleBG.setAttribute('class', 'gbs-progress-circle-bg');
+                const circleFG = circleBG.cloneNode();
+                circleFG.setAttribute('class', 'gbs-progress-circle-fg');
+                const circumference = 2 * Math.PI * 20;
+                Object.assign(circleFG.style, { strokeDasharray: circumference, strokeDashoffset: circumference });
+                svg.append(circleBG, circleFG);
+                progressOverlay.appendChild(svg);
+                return { progressOverlay, circleFG, circumference };
+            },
+            showCompletionModal: function(failedIds) {
+                if (failedIds.length === 0) {
+                    alert('All downloads on this page completed successfully!');
+                    return;
+                }
+                if (document.getElementById('gbs-completion-modal')) return;
+                const modalHTML = `
+                <div id="gbs-completion-modal-overlay" style="position: fixed; top: 0; left: 0; width: 100%; height: 100%; background-color: rgba(0,0,0,0.7); z-index: 100000; display: flex; align-items: center; justify-content: center; font-family: sans-serif;">
+                    <div id="gbs-completion-modal" style="background-color: #252525; color: #eee; padding: 20px; border-radius: 10px; width: 90%; max-width: 500px; text-align: center;">
+                        <h3 style="margin-top: 0; border-bottom: 1px solid #555; padding-bottom: 10px;">Download Process Finished</h3>
+                        <p>The following posts could not be downloaded. You can copy the IDs for a manual check:</p>
+                        <textarea readonly style="width: 95%; height: 150px; background: #333; color: #fff; border: 1px solid #555; resize: none; margin-top: 10px;">${failedIds.join(' ')}</textarea>
+                        <button id="gbs-completion-close" style="margin-top: 15px; padding: 8px 16px; background-color: #007BFF; color: white; border: none; border-radius: 10px; cursor: pointer;">Close</button>
+                    </div>
+                </div>`;
+                document.body.insertAdjacentHTML('beforeend', modalHTML);
+                document.getElementById('gbs-completion-close').addEventListener('click', () => {
+                    document.getElementById('gbs-completion-modal-overlay').remove();
+                });
+            },
+        },
+        toggleSelectionMode: function() {
+            if (this.State.isDownloading) return;
+            this.State.isSelectionModeActive = !this.State.isSelectionModeActive;
+            document.body.classList.toggle('gbs-selection-active', this.State.isSelectionModeActive);
+            this.UI.toggleMenuTriggerCursor(this.State.isSelectionModeActive);
+
+            const selectButton = document.getElementById('gbs-fab-select');
+            selectButton.querySelector('.gbs-fab-text').textContent = this.State.isSelectionModeActive ? 'Cancel' : 'Download (Select)';
+            selectButton.classList.toggle('active', this.State.isSelectionModeActive);
+
+            GlobalState.previewsTemporarilyDisabled = this.State.isSelectionModeActive;
+            const grids = document.querySelectorAll(Config.SELECTORS.THUMBNAIL_GRID_SELECTOR);
+            if (this.State.isSelectionModeActive) {
+                Logger.log("Selection mode activated. Disabling Peek Previews.");
+                grids.forEach(grid => Peek.cleanupThumbnailFeatures(grid));
+            } else {
+                Logger.log("Selection mode deactivated. Re-enabling Peek Previews.");
+                grids.forEach(grid => Peek.initializeThumbnailFeatures(grid));
+                this.UI.resetThumbnailsFeedback();
+            }
+        },
+        handleThumbnailClick: function(event) {
+            if (!this.State.isSelectionModeActive) return;
+            const thumbAnchor = event.target.closest(Config.SELECTORS.MEDIA_VIEWER_THUMBNAIL_ANCHOR);
+            if (!thumbAnchor) return;
+            event.preventDefault();
+            event.stopPropagation();
+            this.downloadSinglePost(thumbAnchor);
+        },
+        injectUI: function() {
+            GM_addStyle(`
+            #gbs-downloader-wrapper { position: fixed; top: 50%; left: 0; transform: translateY(-50%); z-index: 9998; }
+            #gbs-downloader-trigger { width: 18px; height: 50px; background-color: #252525; border-radius: 0 10px 10px 0; cursor: pointer; border: 2px solid #333; border-left: none; transition: background-color 0.2s ease; }
+            #gbs-downloader-wrapper:hover #gbs-downloader-trigger { background-color: #007BFF; }
+            #gbs-downloader-wrapper.menu-open #gbs-downloader-trigger { background-color: #A43535; }
+            #gbs-downloader-trigger.is-blocked { cursor: not-allowed; }
+            #gbs-action-list { position: absolute; top: 50%; left: 100%; transform: translateY(-50%) scale(0.95); margin-left: 15px; display: flex; flex-direction: column; align-items: flex-start; gap: 5px; opacity: 0; transition: opacity 0.2s ease, transform 0.2s ease; pointer-events: none; }
+            #gbs-downloader-wrapper.menu-open #gbs-action-list { opacity: 1; transform: translateY(-50%) scale(1); pointer-events: auto; }
+            .gbs-selection-active body, .gbs-selection-active .thumbnail-preview a, .gbs-selection-active .thumbnail-container > span > a { cursor: crosshair !important; }
+            .thumbnail-preview > a, .thumbnail-container > span > a { display:inline-block; line-height:0; position:relative; transition:transform 0.2s, box-shadow 0.2s; }
+            .gbs-thumb-downloading { transform:scale(0.95); border-radius: 10px !important; overflow:hidden; outline: 4px solid #EFB700 !important; }
+            .gbs-thumb-success { border-radius: 10px !important; overflow:hidden; outline: 4px solid #008450 !important; }
+            .gbs-thumb-error { border-radius: 10px !important; overflow:hidden; outline: 4px solid #B81D13 !important; }
+            .gbs-thumb-success::after, .gbs-thumb-error::after { content:''; position:absolute; top:0; left:0; width:100%; height:100%; display:flex; align-items:center; justify-content:center; font-size:50px; color:white; text-shadow:0 0 5px black; }
+            .gbs-thumb-success::after { background-color:rgba(40, 167, 69, 0.7); content:'✔'; }
+            .gbs-thumb-error::after { background-color:rgba(220, 53, 69, 0.7); content:'✖'; }
+            #gbs-progress-bar-container { position:fixed; bottom:0; left:0; width:100%; height:25px; background-color:#333; z-index:99999; display:none; align-items:center; border-top:1px solid #555; }
+            .gbs-progress-bar-fill { background-color:#008450; height:100%; width:0%; transition:width 0.3s ease-in-out; }
+            .gbs-progress-bar-text { position:absolute; width:100%; text-align:center; color:white; font-weight:bold; text-shadow:1px 1px 1px #000; z-index:10; }
+            .gbs-progress-overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; pointer-events: none; background-color: rgba(0,0,0,0.5); opacity: 0; transition: opacity 0.2s ease-in-out; }
+            .gbs-thumb-downloading .gbs-progress-overlay { opacity: 1; }
+            .gbs-progress-circle-bg { stroke: rgba(255,255,255,0.2); }
+            .gbs-progress-circle-fg { stroke: #EFB700; transform: rotate(-90deg); transform-origin: 50% 50%; transition: stroke-dashoffset 0.1s linear; }
+            #gbs-page-blocker { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background-color: rgba(0,0,0,0.5); cursor: progress; z-index: 9997; opacity: 0; transition: opacity 0.3s ease-in-out; }
+        `);
+
+            document.body.insertAdjacentHTML('beforeend', `
+            <div id="gbs-downloader-wrapper">
+                <div id="gbs-downloader-trigger"></div>
+                <div id="gbs-action-list">
+                    <button id="gbs-fab-download-all" class="gbs-fab-action-btn"><span class="gbs-fab-text">Download All</span></button>
+                    <button id="gbs-fab-select" class="gbs-fab-action-btn"><span class="gbs-fab-text">Download (Select)</span></button>
+                </div>
+            </div>
+            <div id="gbs-progress-bar-container" style="display: none;"><div class="gbs-progress-bar-text"></div><div class="gbs-progress-bar-fill"></div></div>
+        `);
+        },
+        setupEventListeners: function() {
+            const wrapper = document.getElementById('gbs-downloader-wrapper');
+            const menuTrigger = document.getElementById('gbs-downloader-trigger');
+
+            menuTrigger.addEventListener('click', (event) => {
+                if (this.State.isDownloading || this.State.isSelectionModeActive) return;
+                event.stopPropagation();
+                wrapper.classList.toggle('menu-open');
+                if (!wrapper.classList.contains('menu-open')) {
+                    this.UI.showProgressBar(false);
+                    this.UI.resetThumbnailsFeedback();
+                }
+            });
+
+            document.getElementById('gbs-fab-download-all').addEventListener('click', () => this.startDownloadAllProcess());
+            document.getElementById('gbs-fab-select').addEventListener('click', () => this.toggleSelectionMode());
+            document.body.addEventListener('click', (e) => this.handleThumbnailClick(e), true);
+        },
+        toggleVisibility: function(visible) {
+            const wrapper = document.getElementById('gbs-downloader-wrapper');
+            if (wrapper) {
+                wrapper.style.display = visible ? 'block' : 'none';
+                Logger.log(`Downloader UI visibility set to: ${visible}`);
+            }
+        },
+        init: function() {
+            const isPoolPage = window.location.search.includes('page=pool');
+            const isGalleryPage = window.location.search.includes('page=post&s=list');
+            if (!isPoolPage && !isGalleryPage) return;
+
+            this.injectUI();
+            this.setupEventListeners();
+            Logger.log('Downloader: Side-drawer UI initialized.');
+        }
+    };
+
+    // =================================================================================
+    // ADD TO POOL MODULE
+    // =================================================================================
+    const AddToPool = {
+        State: {
+            isSelectionModeActive: false,
+            favoritePools: [],
+            activePoolId: null,
+        },
+        elements: {},
+        async init() {
+            const isGalleryPage = window.location.search.includes('page=post&s=list') || window.location.search.includes('page=pool');
+            if (!isGalleryPage) return;
+
+            await this.loadFavoritePools();
+            if (this.State.favoritePools.length === 0) {
+                Logger.log("[AddToPool] No favorite pools configured. Module will not be displayed.");
+                return;
+            }
+
+            this.injectUI();
+            this.renderPoolSelectionUI();
+            this.setupEventListeners();
+        },
+        async loadFavoritePools() {
+            this.State.favoritePools = await GM.getValue(Config.STORAGE_KEYS.FAVORITE_POOLS, []);
+            if (this.State.favoritePools.length > 0) {
+                this.State.activePoolId = this.State.favoritePools[0].id;
+                Logger.log(`[AddToPool] Loaded ${this.State.favoritePools.length} favorite pools.`);
+            }
+        },
+        renderPoolSelectionUI() {
+            const selector = this.elements.poolSelector;
+            if (!selector) return;
+            selector.innerHTML = '';
+
+            this.State.favoritePools.forEach(pool => {
+                const option = document.createElement('option');
+                option.value = pool.id;
+                option.textContent = pool.name;
+                if (pool.id === this.State.activePoolId) {
+                    option.selected = true;
+                }
+                selector.appendChild(option);
+            });
+        },
+        injectUI() {
+            GM_addStyle(`
+            #gbs-pool-wrapper { position: fixed; top: 30%; left: 0; transform: translateY(-50%); z-index: 9998; }
+            #gbs-pool-trigger { width: 18px; height: 50px; background-color: #252525; border-radius: 0 10px 10px 0; cursor: pointer; border: 2px solid #333; border-left: none; transition: background-color 0.2s ease; }
+            #gbs-pool-wrapper:hover #gbs-pool-trigger { background-color: #007BFF; }
+            #gbs-pool-wrapper.menu-open #gbs-pool-trigger { background-color: #A43535; }
+            #gbs-pool-trigger.is-blocked { cursor: not-allowed; }
+            #gbs-pool-action-list { position: absolute; top: 50%; left: 100%; transform: translateY(-50%) scale(0.95); margin-left: 15px; gap: 8px; display: flex; flex-direction: column; align-items: flex-start; opacity: 0; transition: opacity 0.2s ease, transform 0.2s ease; pointer-events: none; }
+            #gbs-pool-wrapper.menu-open #gbs-pool-action-list { opacity: 1; transform: translateY(-50%) scale(1); pointer-events: auto; }
+            #gbs-pool-selector { background-color: #343a40; color: #fff; border: none; border-radius: 10px; padding: 11px 12px; font-weight: bold; cursor: pointer; width: 168px; }
+            #gbs-pool-selector:focus { outline: none; border-color: #007BFF; }
+            body.gbs-pool-select-mode-active .thumbnail-preview img,
+            body.gbs-pool-select-mode-active .thumbnail-container > span > a { cursor: crosshair !important; }
+            .thumbnail-container > span > a { display: inline-block; line-height: 0; }
+            .gbs-pool-add-notification { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0, 132, 80, 0.8); color: white; display: flex; align-items: center; justify-content: center; font-weight: bold; z-index: 10; border-radius: 10px; pointer-events: none; opacity: 0; transition: opacity 0.3s; }
+        `);
+
+            const wrapper = document.createElement('div');
+            wrapper.id = 'gbs-pool-wrapper';
+            wrapper.innerHTML = `
+            <div id="gbs-pool-trigger"></div>
+            <div id="gbs-pool-action-list">
+                <select id="gbs-pool-selector"></select>
+                <button id="gbs-pool-add-mode-btn" class="gbs-fab-action-btn">
+                    <span class="gbs-fab-text">Add to Pool (Select)</span>
+                </button>
+            </div>
+        `;
+            document.body.appendChild(wrapper);
+
+            this.elements = {
+                wrapper,
+                trigger: wrapper.querySelector('#gbs-pool-trigger'),
+                addModeButton: wrapper.querySelector('#gbs-pool-add-mode-btn'),
+                poolSelector: wrapper.querySelector('#gbs-pool-selector'),
+            };
+        },
+        setupEventListeners() {
+            this.elements.trigger.addEventListener('click', (event) => {
+                if (this.State.isSelectionModeActive) return;
+                event.stopPropagation();
+                this.elements.wrapper.classList.toggle('menu-open');
+            });
+
+            this.elements.poolSelector.addEventListener('change', (e) => {
+                this.State.activePoolId = e.target.value;
+                Logger.log(`[AddToPool] Active pool set to ID: ${this.State.activePoolId}`);
+            });
+
+            this.elements.addModeButton.addEventListener('click', (e) => {
+                e.preventDefault();
+                this.toggleSelectionMode();
+            });
+        },
+        toggleSelectionMode() {
+            this.State.isSelectionModeActive = !this.State.isSelectionModeActive;
+            const buttonText = this.elements.addModeButton.querySelector('.gbs-fab-text');
+
+            this.elements.addModeButton.classList.toggle('active', this.State.isSelectionModeActive);
+            this.elements.trigger.classList.toggle('is-blocked', this.State.isSelectionModeActive);
+            document.body.classList.toggle('gbs-pool-select-mode-active', this.State.isSelectionModeActive);
+
+            if (this.State.isSelectionModeActive) {
+                buttonText.textContent = 'Cancel';
+                document.body.addEventListener('click', this.handleThumbnailClick, true);
+
+                GlobalState.previewsTemporarilyDisabled = true;
+                document.querySelectorAll(Config.SELECTORS.THUMBNAIL_GRID_SELECTOR).forEach(grid => Peek.cleanupThumbnailFeatures(grid));
+                Logger.log("[AddToPool] Selection mode activated. Disabling Peek Previews.");
+            } else {
+                buttonText.textContent = 'Add to Pool (Select)';
+                document.body.removeEventListener('click', this.handleThumbnailClick, true);
+
+                GlobalState.previewsTemporarilyDisabled = false;
+                document.querySelectorAll(Config.SELECTORS.THUMBNAIL_GRID_SELECTOR).forEach(grid => Peek.initializeThumbnailFeatures(grid));
+                Logger.log("[AddToPool] Selection mode deactivated. Re-enabling Peek Previews.");
+            }
+        },
+        handleThumbnailClick: (event) => {
+            const self = AddToPool;
+            if (!self.State.isSelectionModeActive) return;
+
+            const thumbAnchor = event.target.closest(Config.SELECTORS.MEDIA_VIEWER_THUMBNAIL_ANCHOR);
+            if (!thumbAnchor) return;
+
+            event.preventDefault();
+            event.stopPropagation();
+
+            if (!self.State.activePoolId) {
+                alert('Please select a target pool from the list first.');
+                self.elements.wrapper.classList.add('menu-open');
+                return;
+            }
+
+            const postId = Utils.getPostId(thumbAnchor.href);
+            if (!postId) return;
+
+            const script = document.createElement('script');
+            script.textContent = `(() => {
+                const originalPrompt = window.prompt;
+                window.prompt = () => '${self.State.activePoolId}'; // Usa o ID do pool ativo
+                if (typeof addToPoolID === 'function') {
+                    addToPoolID(${postId});
+                }
+                window.prompt = originalPrompt;
+            })();`;
+            document.body.appendChild(script).remove();
+
+            const notif = document.createElement('div');
+            notif.className = 'gbs-pool-add-notification';
+            notif.textContent = 'Added!';
+            thumbAnchor.style.position = 'relative';
+            thumbAnchor.appendChild(notif);
+            setTimeout(() => { notif.style.opacity = '1'; }, 10);
+            setTimeout(() => {
+                notif.style.opacity = '0';
+                setTimeout(() => notif.remove(), 300);
+            }, 1500);
+        },
+        toggleVisibility: function(visible) {
+            const wrapper = document.getElementById('gbs-pool-wrapper');
+            if (wrapper) {
+                wrapper.style.display = visible ? 'block' : 'none';
+                Logger.log(`AddToPool UI visibility set to: ${visible}`);
+            }
+        },
+    };
+
+    // =================================================================================
+    // MEDIA VIEWER MODULE
+    // =================================================================================
+    const MediaViewer = {
+        _boundKeyDownHandler: null,
+        _isNavigating: false,
+        elements: {},
+        State: {
+            isLargeViewActive: false,
+            currentImageIndex: -1,
+            largeMediaElements: [],
+            thumbnailAnchors: [],
+            inactivityTimer: null,
+            _boundResetInactivityTimer: null,
+            _scrollHandler: null,
+            _isThrottled: false,
+            currentPoolPopup: null
+        },
+        init() {
+            const isPoolPage = window.location.search.includes('page=pool');
+            const isGalleryPage = window.location.search.includes('page=post&s=list');
+            if (!isPoolPage && !isGalleryPage) return;
+            this.State.thumbnailAnchors = Array.from(document.querySelectorAll(Config.SELECTORS.MEDIA_VIEWER_THUMBNAIL_ANCHOR));
+            this.injectUI();
+            this.setupEventListeners();
+        },
+        injectUI() {
+            GM_addStyle(`
+            body.gbs-viewer-mode-active #container { display: block !important; }
+            body.gbs-viewer-mode-active section.aside { display: none !important; }
+            body.gbs-hide-viewer-cursor, body.gbs-hide-viewer-cursor * { cursor: none !important; }
+            .gbs-large-view-active.thumbnail-container > div[style*="text-align: center"] { display: none !important; }
+
+            .gbs-large-view-active.thumbnail-container { display: block !important; }
+            .gbs-large-view-active.thumbnail-container > .thumbnail-preview { width: 100vw !important; max-width: none !important; height: 100vh !important; display: flex !important; justify-content: center !important; align-items: center !important; padding: 0 !important; margin: 0 !important; }
+            .gbs-large-view-active.thumbnail-container > span { height: 100vh; display: flex; justify-content: center; align-items: center; }
+            .gbs-large-view-active.thumbnail-container a { pointer-events: none; }
+            .gbs-large-view-media { max-width: 93vw !important; max-height: 98vh !important; object-fit: contain; pointer-events: auto; border-radius: 0px !important; }
+
+            .gbs-viewer-nav-item { color: #fff; background-color: rgba(37, 37, 37, 0.8); padding: 5px; border-radius: 10px; border: 2px solid rgba(51, 51, 51, 0.5); width: 45px; height: 40px; display: flex; align-items: center; justify-content: center; box-sizing: border-box !important; transition: background-color 0.2s, border-color 0.2s ease; }
+            .gbs-viewer-nav-btn { font-size: 24px; cursor: pointer; }
+            .gbs-viewer-nav-btn:hover { background-color: #333; border-color: #333; }
+            #gbs-viewer-nav-counter { font-size: 14px; font-weight: bold; user-select: none; height: 30px;}
+            #gbs-viewer-nav-container { position: fixed; top: 80%; left: 4px; z-index: 99999; display: none; flex-direction: column; gap: 5px; }
+            #gbs-viewer-nav-container.visible { display: flex; }
+
+            #gbs-viewer-top-controls { position: fixed; top: 4%; left: 4px; z-index: 99999; display: flex; flex-direction: column; gap: 10px; }
+            #gbs-viewer-btn, #gbs-viewer-show-info-btn, #gbs-viewer-open-post-btn { color: #fff !important; position: static; transform: none; width: 45px; height: 45px; padding: 5px; background-color: rgba(37, 37, 37, 0.8); backdrop-filter: blur(5px); border: 2px solid rgba(51, 51, 51, 0.5); border-radius: 10px; cursor: pointer; font-size: 18px; display: flex; align-items: center; justify-content: center; transition: background-color 0.2s ease, border-color 0.2s ease, color 0.2s ease; }
+            #gbs-viewer-show-info-btn, #gbs-viewer-open-post-btn { display: none; }
+            #gbs-viewer-btn:hover, #gbs-viewer-show-info-btn:hover, #gbs-viewer-open-post-btn:hover { background-color: #006FFA; border-color: #006FFA; }
+            #gbs-viewer-btn.active { background-color: rgba(37, 37, 37, 0.8); border-color: rgba(51, 51, 51, 0.5); }
+            #gbs-viewer-btn.active:hover { background-color: #A43535; border-color: #A43535; }
+            #gbs-viewer-show-info-btn.active { color: #006FFA !important; border-color: #006FFA; }
+            #gbs-viewer-show-info-btn:hover { color: white; }
+            #gbs-viewer-top-controls, #gbs-viewer-nav-container { transition: opacity 0.3s ease-in-out; }
+
+            #gbs-viewer-info-sidebar { position: fixed !important; top: 0; right: -280px; width: 250px; height: 100vh; background-color: #1f1f1f; border-left: 2px solid #333; z-index: 99999; padding: 2px; box-sizing: border-box; overflow-y: auto; transition: right 0.3s ease-in-out; }
+            #gbs-viewer-info-sidebar.visible { right: 0; }
+            #gbs-viewer-info-sidebar .tag-list { position: absolute !important; width: 90%; box-sizing: border-box; word-wrap: break-word; padding: 0px; border: 0 !important; }
+            #gbs-viewer-info-sidebar .tag-type-artist a { color: #AA0000 !important; }
+            #gbs-viewer-info-sidebar .tag-type-character a { color: #00AA00 !important; }
+            #gbs-viewer-info-sidebar .tag-type-copyright a { color: #AA00AA !important; }
+            #gbs-viewer-info-sidebar .tag-type-metadata a { color: #FF8800 !important; }
+            #gbs-viewer-info-sidebar .tag-type-general a { color: white !important; }
+            #gbs-viewer-info-sidebar #tag-list li { padding: 0 !important; margin: 0 !important; width: 100% !important; line-height: 23px !important; }
+            .gbs-ui-hidden { opacity: 0; pointer-events: none; }
+            .gbs-custom-action-btn { display: block;background-color: rgba(0, 111, 250, 0.5); color: white !important; padding: 8px; margin-bottom: 10px; margin-top: 10px; border-radius: 10px; text-align: center; font-weight: bold; font-size: 17px; transition: background-color 0.2s ease; cursor: pointer; }
+            .gbs-custom-action-btn:hover { background-color: #006FFA; color: white !important; }
+            .gbs-action-buttons-container { display: grid !important; grid-template-columns: 1fr 3fr; gap: 10px; }
+
+            .gbs-pool-popup { background-color: #343a40; border-radius: 10px; padding: 5px; z-index: 100000; display: flex; flex-direction: column; gap: 3px; width: 150px; }
+            .gbs-pool-popup-item { padding: 5px 8px; color: #eee !important; cursor: pointer; text-align: center; }
+            .gbs-pool-popup-item:hover { background-color: #666; border-radius: 10px; }
+
+            .gbs-thumb-placeholder { display: inline-flex; align-items: center; justify-content: center; }
+            .gbs-thumb-placeholder .gbs-thumb-loader { color: white; font-size: 2em; animation: gbs-spin 1.2s linear infinite; }
+            @keyframes gbs-spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+            #gbs-loading-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background-color: rgba(0, 0, 0, 0.9); z-index: 100000; opacity: 1; transition: opacity 0.2s ease-out; pointer-events: none; }
+            `);
+
+            const topControlsContainer = document.createElement('div');
+            topControlsContainer.id = 'gbs-viewer-top-controls';
+            const viewerButton = document.createElement('button');
+            viewerButton.id = 'gbs-viewer-btn';
+            viewerButton.title = 'Open/Close Media Viewer';
+            viewerButton.innerHTML = '<i class="fas fa-images"></i>';
+            const showInfoBtn = document.createElement('button');
+            showInfoBtn.id = 'gbs-viewer-show-info-btn';
+            showInfoBtn.title = 'Show Post Info';
+            showInfoBtn.innerHTML = '<i class="fas fa-info"></i>';
+            const openPostBtn = document.createElement('button');
+            openPostBtn.id = 'gbs-viewer-open-post-btn';
+            openPostBtn.title = 'Open Post in New Tab';
+            openPostBtn.innerHTML = '<i class="fas fa-external-link-alt"></i>';
+            topControlsContainer.append(viewerButton, showInfoBtn, openPostBtn);
+            document.body.appendChild(topControlsContainer);
+
+            const navContainer = document.createElement('div');
+            navContainer.id = 'gbs-viewer-nav-container';
+            navContainer.innerHTML = `
+            <button class="gbs-viewer-nav-item gbs-viewer-nav-btn" id="gbs-viewer-nav-up" title="Previous Image"><i class="fas fa-angle-up"></i></button>
+                <div class="gbs-viewer-nav-item" id="gbs-viewer-nav-counter">0</div>
+                <button class="gbs-viewer-nav-item gbs-viewer-nav-btn" id="gbs-viewer-nav-down" title="Next Image"><i class="fas fa-angle-down"></i></button>
+                `;
+            document.body.appendChild(navContainer);
+
+            const infoSidebar = document.createElement('div');
+            infoSidebar.id = 'gbs-viewer-info-sidebar';
+            document.body.appendChild(infoSidebar);
+
+            this.elements = {
+                viewerButton,
+                topControlsContainer,
+                navContainer,
+                navUpButton: navContainer.querySelector('#gbs-viewer-nav-up'),
+                navCounter: navContainer.querySelector('#gbs-viewer-nav-counter'),
+                navDownButton: navContainer.querySelector('#gbs-viewer-nav-down'),
+                showInfoButton: showInfoBtn,
+                openPostButton: openPostBtn,
+                infoSidebar,
+            };
+        },
+        setupEventListeners() {
+            this.elements.viewerButton.addEventListener('click', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                this.toggleLargeThumbnails();
+            });
+            this.elements.navUpButton.addEventListener('click', () => this.navigateToImage(-1));
+            this.elements.navDownButton.addEventListener('click', () => this.navigateToImage(1));
+            this.elements.showInfoButton.addEventListener('click', () => this.toggleInfoSidebar());
+            this.elements.openPostButton.addEventListener('click', () => {
+                if (this.State.currentImageIndex >= 0 && this.State.largeMediaElements.length > 0) {
+                    const currentMedia = this.State.largeMediaElements[this.State.currentImageIndex];
+                    const anchor = currentMedia.closest('a');
+                    if (anchor && anchor.href) {
+                        GM_openInTab(anchor.href, { active: false });
+                    }
+                }
+            });
+        },
+        async toggleLargeThumbnails() {
+            this.State.isLargeViewActive = !this.State.isLargeViewActive;
+            this.elements.viewerButton.classList.toggle('active', this.State.isLargeViewActive);
+            const container = document.querySelector('.thumbnail-container');
+            if (container) container.classList.toggle('gbs-large-view-active', this.State.isLargeViewActive);
+            if (this.State.isLargeViewActive) {
+                await this.activateLargeView();
+            } else {
+                this.deactivateLargeView();
+            }
+        },
+        async activateLargeView() {
+            const loadingOverlay = document.createElement('div');
+            loadingOverlay.id = 'gbs-loading-overlay';
+            document.body.appendChild(loadingOverlay);
+
+            try {
+                GlobalState.previewsTemporarilyDisabled = true;
+                if (typeof Peek !== 'undefined' && Settings.State.ENABLE_PEEK_PREVIEWS) {
+                    Logger.log("[MediaViewer] Activated. Disabling Peek Previews to prevent conflicts.");
+                    document.querySelectorAll(Config.SELECTORS.THUMBNAIL_GRID_SELECTOR).forEach(grid => {
+                        if (grid.dataset.enhancerInitialized) Peek.cleanupThumbnailFeatures(grid);
+                    });
+                }
+                document.body.classList.add('gbs-viewer-mode-active');
+                if (typeof Downloader !== 'undefined') Downloader.toggleVisibility(false);
+                if (typeof AddToPool !== 'undefined') AddToPool.toggleVisibility(false);
+
+                this.elements.viewerButton.innerHTML = '<i class="fas fa-times"></i>';
+                document.body.style.overflow = 'hidden';
+
+                const firstThumbImg = this.State.thumbnailAnchors.length > 0 ? this.State.thumbnailAnchors[0].querySelector('img') : null;
+                const placeholderDims = firstThumbImg ? { w: firstThumbImg.getBoundingClientRect().width, h: firstThumbImg.getBoundingClientRect().height } : { w: 150, h: 150 };
+
+                this.State.thumbnailAnchors.forEach(anchor => {
+                    const originalThumb = anchor.querySelector('img');
+                    if (originalThumb) originalThumb.style.display = 'none';
+
+                    const placeholder = document.createElement('div');
+                    placeholder.className = 'gbs-thumb-placeholder';
+                    placeholder.style.width = `${placeholderDims.w}px`;
+                    placeholder.style.height = `${placeholderDims.h}px`;
+                    placeholder.innerHTML = `<i class="fas fa-spinner gbs-thumb-loader"></i>`;
+                    placeholder.dataset.loaded = 'false';
+                    anchor.appendChild(placeholder);
+                });
+
+                if (this.State.thumbnailAnchors.length > 0) {
+                    const firstAnchor = this.State.thumbnailAnchors[0];
+                    const placeholder = firstAnchor.querySelector('.gbs-thumb-placeholder');
+                    if (placeholder) {
+                        placeholder.dataset.loaded = 'loading';
+                        await this.loadAndReplaceMedia(firstAnchor, placeholderDims);
+                    }
+                }
+
+                if (!this._boundKeyDownHandler) {
+                    this._boundKeyDownHandler = this.handleNavKeyDown.bind(this);
+                }
+                document.addEventListener('keydown', this._boundKeyDownHandler);
+                this.State.currentImageIndex = -1;
+                this.elements.navContainer.classList.add('visible');
+                this.setupInactivityListeners();
+
+                this.navigateToImage(1);
+
+                this.State._scrollHandler = this._lazyLoadCheck.bind(this);
+                window.addEventListener('scroll', this.State._scrollHandler);
+                window.addEventListener('resize', this.State._scrollHandler);
+
+                this._lazyLoadCheck();
+            } finally {
+                loadingOverlay.style.opacity = '0';
+                loadingOverlay.addEventListener('transitionend', () => {
+                    loadingOverlay.remove();
+                }, { once: true });
+            }
+        },
+        deactivateLargeView() {
+            document.getElementById('gbs-loading-overlay')?.remove();
+
+            GlobalState.previewsTemporarilyDisabled = false;
+            if (typeof Peek !== 'undefined' && Settings.State.ENABLE_PEEK_PREVIEWS) {
+                Logger.log("[MediaViewer] Deactivated. Re-enabling Peek Previews.");
+                document.querySelectorAll(Config.SELECTORS.THUMBNAIL_GRID_SELECTOR).forEach(grid => {
+                    Peek.initializeThumbnailFeatures(grid);
+                });
+            }
+            document.body.classList.remove('gbs-viewer-mode-active');
+            this.cleanupInactivityListeners();
+            if (typeof Downloader !== 'undefined') Downloader.toggleVisibility(true);
+            if (typeof AddToPool !== 'undefined') AddToPool.toggleVisibility(true);
+
+            if (this.State._scrollHandler) {
+                window.removeEventListener('scroll', this.State._scrollHandler);
+                window.removeEventListener('resize', this.State._scrollHandler);
+                this.State._scrollHandler = null;
+            }
+
+            this.elements.viewerButton.innerHTML = '<i class="fas fa-images"></i>';
+            this.elements.showInfoButton.style.display = 'none';
+            this.elements.openPostButton.style.display = 'none';
+            this.elements.infoSidebar.classList.remove('visible');
+            this.elements.showInfoButton.classList.remove('active');
+            document.body.style.overflow = '';
+            const thumbnailContainer = document.querySelector('.thumbnail-container');
+            if (thumbnailContainer) thumbnailContainer.classList.remove('gbs-large-view-active');
+            if (this._boundKeyDownHandler) document.removeEventListener('keydown', this._boundKeyDownHandler);
+            this.elements.navContainer.classList.remove('visible');
+
+            this.State.thumbnailAnchors.forEach(anchor => {
+                anchor.querySelector('.gbs-large-view-media, .gbs-thumb-placeholder')?.remove();
+                const originalThumb = anchor.querySelector('img');
+                if (originalThumb) originalThumb.style.display = '';
+            });
+            this.State.largeMediaElements = [];
+            this.closePoolPopup();
+        },
+        resetInactivityTimer() {
+            if (!this.State.isLargeViewActive) return;
+            this.elements.topControlsContainer?.classList.remove('gbs-ui-hidden');
+            this.elements.navContainer?.classList.remove('gbs-ui-hidden');
+            document.body.classList.remove('gbs-hide-viewer-cursor');
+            clearTimeout(this.State.inactivityTimer);
+            this.State.inactivityTimer = setTimeout(() => {
+                const isHoveringControls = this.elements.topControlsContainer?.matches(':hover') || this.elements.navContainer?.matches(':hover');
+                if (!isHoveringControls) {
+                    this.elements.topControlsContainer?.classList.add('gbs-ui-hidden');
+                    this.elements.navContainer?.classList.add('gbs-ui-hidden');
+                    document.body.classList.add('gbs-hide-viewer-cursor');
+                }
+            }, 3000);
+        },
+        setupInactivityListeners() {
+            this.State._boundResetInactivityTimer = this.resetInactivityTimer.bind(this);
+            document.addEventListener('mousemove', this.State._boundResetInactivityTimer);
+            this.resetInactivityTimer();
+        },
+        cleanupInactivityListeners() {
+            if (this.State._boundResetInactivityTimer) {
+                document.removeEventListener('mousemove', this.State._boundResetInactivityTimer);
+                this.State._boundResetInactivityTimer = null;
+            }
+            clearTimeout(this.State.inactivityTimer);
+            this.State.inactivityTimer = null;
+            this.elements.topControlsContainer?.classList.remove('gbs-ui-hidden');
+            this.elements.navContainer?.classList.remove('gbs-ui-hidden');
+            document.body.classList.remove('gbs-hide-viewer-cursor');
+        },
+        _lazyLoadCheck() {
+            if (this.State._isThrottled) return;
+            this.State._isThrottled = true;
+
+            setTimeout(() => {
+                const placeholders = document.querySelectorAll('.gbs-thumb-placeholder[data-loaded="false"]');
+                const viewportHeight = window.innerHeight;
+
+                placeholders.forEach(placeholder => {
+                    const rect = placeholder.getBoundingClientRect();
+                    if (rect.top < viewportHeight * 6.5) {
+                        placeholder.dataset.loaded = 'loading';
+                        const anchor = placeholder.closest('a');
+                        if (anchor) {
+                            const dims = { w: rect.width, h: rect.height };
+                            this.loadAndReplaceMedia(anchor, dims);
+                        }
+                    }
+                });
+                this.State._isThrottled = false;
+            }, 200);
+        },
+        loadAndReplaceMedia(anchor, dims) {
+            return new Promise(async (resolve) => {
+                const placeholder = anchor.querySelector('.gbs-thumb-placeholder');
+                if (!placeholder) return resolve();
+
+                const postId = Utils.getPostId(anchor.href);
+                if (!postId) {
+                    placeholder.remove();
+                    return resolve();
+                }
+
+                try {
+                    const media = await API.fetchMediaDetailsFromHTML(anchor.href);
+                    const mediaElement = media.type === 'video' ? document.createElement('video') : document.createElement('img');
+                    mediaElement.addEventListener('click', (e) => e.preventDefault());
+                    mediaElement.src = media.url;
+                    mediaElement.className = 'gbs-large-view-media';
+                    if (media.type === 'video') {
+                        mediaElement.controls = true;
+                        mediaElement.loop = true;
+                        mediaElement.muted = false;
+                    }
+                    const loadEvent = media.type === 'video' ? 'loadeddata' : 'load';
+                    mediaElement.addEventListener(loadEvent, async () => {
+                        if (media.type === 'image') {
+                            try {
+                                await mediaElement.decode();
+                            } catch (e) {
+                                Logger.warn('Image decode failed, but proceeding:', e);
+                            }
+                        }
+                        placeholder.replaceWith(mediaElement);
+                        this.State.largeMediaElements = Array.from(document.querySelectorAll('.gbs-large-view-media'));
+                        resolve();
+                    }, { once: true });
+                    mediaElement.addEventListener('error', () => {
+                        placeholder.remove();
+                        resolve();
+                    }, { once: true });
+                } catch (error) {
+                    Logger.error(`Failed to load media for post ${postId}:`, error);
+                    placeholder.remove();
+                    resolve();
+                }
+            });
+        },
+        navigateToImage(direction) {
+            if (this._isNavigating) return;
+            this._isNavigating = true;
+            this.closePoolPopup();
+
+            if (this.State.currentImageIndex === this.State.thumbnailAnchors.length - 1 && direction > 0) {
+                window.scrollBy({ top: 400, behavior: 'smooth' });
+                this._isNavigating = false;
+                return;
+            }
+
+            if (this.State.currentImageIndex >= 0) {
+                const prevAnchor = this.State.thumbnailAnchors[this.State.currentImageIndex];
+                const prevMedia = prevAnchor?.querySelector('video.gbs-large-view-media');
+                if (prevMedia) prevMedia.pause();
+            }
+
+            if (this.State.thumbnailAnchors.length === 0) {
+                this._isNavigating = false;
+                return;
+            }
+
+            const newIndex = Math.max(0, Math.min(this.State.thumbnailAnchors.length - 1, this.State.currentImageIndex + direction));
+
+            if (newIndex !== this.State.currentImageIndex) {
+                this.State.currentImageIndex = newIndex;
+                const targetAnchor = this.State.thumbnailAnchors[this.State.currentImageIndex];
+                if (targetAnchor) {
+                    targetAnchor.scrollIntoView({ behavior: 'auto', block: 'center' });
+                }
+                if (this.elements.infoSidebar.classList.contains('visible')) {
+                    this.fetchAndDisplayInfo();
+                } else {
+                     this.elements.infoSidebar.dataset.currentPostId = '';
+                }
+            }
+            this.updateNavCounter();
+            this._lazyLoadCheck();
+            setTimeout(() => { this._isNavigating = false; }, 50);
+        },
+        handleNavKeyDown(event) {
+            if (document.activeElement.tagName === 'INPUT' || document.activeElement.tagName === 'TEXTAREA') return;
+
+            const viewerHotkeys = [
+                Settings.State.KEY_VIEWER_PREV_IMAGE,
+                Settings.State.KEY_VIEWER_NEXT_IMAGE,
+                Settings.State.KEY_VIEWER_TOGGLE_INFO
+            ];
+
+            if (!viewerHotkeys.includes(event.key)) return;
+
+            event.preventDefault();
+            event.stopPropagation();
+            this.closePoolPopup();
+
+            if (event.key === Settings.State.KEY_VIEWER_PREV_IMAGE) {
+                this.navigateToImage(-1);
+            } else if (event.key === Settings.State.KEY_VIEWER_NEXT_IMAGE) {
+                this.navigateToImage(1);
+            } else if (event.key === Settings.State.KEY_VIEWER_TOGGLE_INFO) {
+                this.toggleInfoSidebar();
+            }
+        },
+        updateNavCounter() {
+            if (!this.elements.navCounter) return;
+            const currentImageNum = Math.max(0, this.State.currentImageIndex + 1);
+            this.elements.navCounter.textContent = currentImageNum;
+            const shouldShow = this.State.isLargeViewActive && currentImageNum > 0;
+            this.elements.showInfoButton.style.display = shouldShow ? 'flex' : 'none';
+            this.elements.openPostButton.style.display = shouldShow ? 'flex' : 'none';
+        },
+        toggleInfoSidebar() {
+            this.closePoolPopup();
+            const isVisible = this.elements.infoSidebar.classList.toggle('visible');
+            this.elements.showInfoButton.classList.toggle('active', isVisible);
+            if (isVisible) this.fetchAndDisplayInfo();
+        },
+        closePoolPopup() {
+            if (this.State.currentPoolPopup) {
+                this.State.currentPoolPopup.remove();
+                this.State.currentPoolPopup = null;
+                document.removeEventListener('click', this.handleOutsidePopupClick, true);
+            }
+        },
+        handleOutsidePopupClick: (event) => {
+            if (MediaViewer.State.currentPoolPopup && !MediaViewer.State.currentPoolPopup.contains(event.target) && !event.target.closest('.gbs-custom-action-btn[data-action="add-pool"]')) {
+                MediaViewer.closePoolPopup();
+            }
+        },
+        async fetchAndDisplayInfo() {
+            const sidebar = this.elements.infoSidebar;
+            if (this.State.currentImageIndex < 0 || this.State.currentImageIndex >= this.State.thumbnailAnchors.length) return;
+
+            const anchor = this.State.thumbnailAnchors[this.State.currentImageIndex];
+
+            if (!anchor || !anchor.href) return;
+            const postId = Utils.getPostId(anchor.href);
+            if (sidebar.dataset.currentPostId === postId && !sidebar.innerHTML.includes('Loading info...')) return;
+
+            sidebar.innerHTML = '<p>&nbsp;&nbsp;&nbsp;Loading info...</p>';
+            sidebar.dataset.currentPostId = postId;
+            this.closePoolPopup();
+
+            try {
+                const { promise } = Utils.makeRequest({ method: "GET", url: anchor.href });
+                const response = await promise;
+                if (Utils.getPostId(this.State.thumbnailAnchors[this.State.currentImageIndex]?.href) !== postId) return;
+
+                const doc = new DOMParser().parseFromString(response.responseText, "text/html");
+                const tagListElement = doc.querySelector('#tag-list');
+
+                if (tagListElement) {
+                    const actionButtonsContainer = document.createElement('li');
+                    actionButtonsContainer.className = 'gbs-action-buttons-container';
+                    actionButtonsContainer.style.position = 'relative';
+
+                    // --- Favorite Button ---
+                    const favoritesLi = Array.from(tagListElement.querySelectorAll('li a')).find(a => a.textContent.includes('Add to favorites') || a.textContent.includes('Unfavorite'))?.closest('li');
+                    if (favoritesLi) {
+                        const favoritesLink = favoritesLi.querySelector('a');
+                        favoritesLink.innerHTML = '<i class="fas fa-star"></i>';
+                        favoritesLink.className = 'gbs-custom-action-btn';
+
+                        favoritesLink.addEventListener('click', function(e) {
+                           this.style.backgroundColor = '#daa520';
+                           setTimeout(() => { this.style.backgroundColor = ''; }, 2000);
+                        });
+
+                        actionButtonsContainer.appendChild(favoritesLink);
+                        favoritesLi.remove();
+                    }
+
+                    // --- Add to Pool Button ---
+                    const poolLi = Array.from(tagListElement.querySelectorAll('li a')).find(a => a.textContent.includes('Add to Pool'))?.closest('li');
+                    if (poolLi && Settings.State.favoritePools && Settings.State.favoritePools.length > 0) {
+                        const poolButton = document.createElement('div');
+                        poolButton.innerHTML = 'Add to Pool';
+                        poolButton.className = 'gbs-custom-action-btn';
+                        poolButton.dataset.action = 'add-pool';
+
+                        poolButton.addEventListener('click', (e) => {
+                            e.stopPropagation();
+                            if (this.State.currentPoolPopup) {
+                                this.closePoolPopup();
+                                return;
+                            }
+
+                            const popup = document.createElement('div');
+                            popup.className = 'gbs-pool-popup';
+
+                            Settings.State.favoritePools.forEach(pool => {
+                                const poolItem = document.createElement('div');
+                                poolItem.className = 'gbs-pool-popup-item';
+                                poolItem.textContent = pool.name;
+                                poolItem.dataset.poolId = pool.id;
+
+                                poolItem.addEventListener('click', () => {
+                                    const selectedPoolId = pool.id;
+                                    const script = document.createElement('script');
+                                    script.textContent = `(() => {
+                                        const originalPrompt = window.prompt;
+                                        window.prompt = () => '${selectedPoolId}';
+                                        if (typeof addToPoolID === 'function') {
+                                            addToPoolID(${postId});
+                                        }
+                                        window.prompt = originalPrompt;
+                                    })();`;
+                                    document.body.appendChild(script).remove();
+
+                                    poolButton.textContent = `Added!`;
+                                    poolButton.style.backgroundColor = '#daa520';
+                                    setTimeout(() => {
+                                        poolButton.textContent = 'Add to Pool';
+                                         poolButton.style.backgroundColor = '';
+                                    }, 2000);
+                                    this.closePoolPopup();
+                                });
+                                popup.appendChild(poolItem);
+                            });
+
+                            const btnRect = poolButton.getBoundingClientRect();
+                            const sidebarRect = sidebar.getBoundingClientRect();
+
+                            popup.style.position = 'absolute';
+                            popup.style.left = `${(btnRect.left - sidebarRect.left) + (btnRect.width / 2)}px`;
+                            popup.style.top = `${(btnRect.bottom - sidebarRect.top) + sidebar.scrollTop + 4}px`;
+                            popup.style.transform = 'translateX(-51%)';
+                            sidebar.appendChild(popup);
+                            this.State.currentPoolPopup = popup;
+
+                            setTimeout(() => {
+                                document.addEventListener('click', this.handleOutsidePopupClick, true);
+                            }, 0);
+                        });
+
+                        actionButtonsContainer.appendChild(poolButton);
+                        poolLi.remove();
+                    }
+
+                    if (actionButtonsContainer.hasChildNodes()) {
+                        tagListElement.prepend(actionButtonsContainer);
+                    }
+
+                    tagListElement.querySelectorAll('a').forEach(a => {
+                        if (!a.classList.contains('gbs-custom-action-btn')) {
+                            const href = a.getAttribute('href');
+                            if (href) {
+                                a.href = new URL(href, 'https://gelbooru.com/').href;
+                                a.target = '_blank';
+                                a.rel = 'noopener noreferrer';
+                            }
+                        }
+                    });
+
+
+                    sidebar.innerHTML = '';
+                    sidebar.appendChild(tagListElement);
+                    sidebar.dataset.currentPostId = postId;
+                } else {
+                    throw new Error("Could not find '#tag-list' in the post page.");
+                }
+            } catch (error) {
+                Logger.error("Failed to fetch or parse post info:", error);
+                if (Utils.getPostId(this.State.thumbnailAnchors[this.State.currentImageIndex]?.href) === postId) {
+                    sidebar.innerHTML = `<p style="color: #A43535;">&nbsp;&nbsp;&nbsp;Error loading info.</p>`;
+                    sidebar.dataset.currentPostId = postId;
+                }
+            }
+        },
+    };
+
+    // =================================================================================
+    // MAIN APPLICATION ORCHESTRATOR
+    // =================================================================================
+    const App = {
+        State: {
+            currentPoolPopup: null
+        },
+        closePoolPopup: function() {
+            if (this.State.currentPoolPopup) {
+                this.State.currentPoolPopup.remove();
+                this.State.currentPoolPopup = null;
+                document.removeEventListener('click', this.handleOutsidePopupClick, true);
+            }
+        },
+        handleOutsidePopupClick: (event) => {
+            if (App.State.currentPoolPopup && !App.State.currentPoolPopup.contains(event.target) && !event.target.closest('.gbs-pool-action-button')) {
+                App.closePoolPopup();
+            }
+        },
+        addGlobalStyles: function() {
+            let customCss = '';
+            if (window.location.href.includes('page=favorites')) {
+                customCss += `html, body { background-color: #1F1F1F !important; }`;
+            }
+            if (Settings.State.HIDE_PAGE_SCROLLBARS) {
+                customCss += `html, body { scrollbar-width: none !important;} html::-webkit-scrollbar, body::-webkit-scrollbar { display: none !important; }`;
+            }
+
+            if (GlobalState.pageType === 'post') {
+                GM_addStyle(`
+                    ul.tag-list li { margin: 2px 4px 2px 2px; width: 210px; }
+                    .aside { max-height: 100vh; overflow-y: auto; }
+                    main #image, main video#gelcomVideoPlayer { width: 100vw !important; margin: auto !important; object-fit: contain !important; }
+                    .gbs-pool-action-container { display: inline-flex; gap: 5px; align-items: center;}
+                    .gbs-pool-action-button { border: none; color: #ddd; border-radius: 5px; padding: 4px 8px; cursor: pointer; font-weight: bold; font-size: 12px; }
+                    #gbs-post-pool-add-btn { width: 93px; background-color: #333; }
+                    #gbs-post-pool-remove-btn { width: 140px; background-color: rgba(164, 53, 53, 0.6); }
+                    #gbs-pool-count-badge { align-items: center; justify-content: center; width: 20px; padding: 3.3px; background-color: #333; color: #fff; border-radius: 5px; font-size: 11px; font-weight: bold; }
+
+                    .gbs-pool-popup { background-color: #343a40; border-radius: 10px; padding: 5px; z-index: 100000; display: flex; flex-direction: column; gap: 3px; min-width: 130px; }
+                    .gbs-pool-popup-item { padding: 5px 8px; color: #eee !important; cursor: pointer; text-align: center; }
+                    .gbs-pool-popup-item:hover { background-color: #666; border-radius: 10px; }
+                `);
+            }
+
+            if (!document.querySelector('link[href*="font-awesome"]')) {
+                const faLink = document.createElement('link');
+                faLink.rel = 'stylesheet';
+                faLink.href = 'https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/all.min.css';
+                document.head.appendChild(faLink);
+            }
+            if (customCss.trim() !== '') {
+                GM_addStyle(customCss);
+            }
+            GM_addStyle(`
+                .gbs-fab-action-btn {min-width: 168px; justify-content: center; background-color: #343a40; color: white; font-weight: bold; border: none; border-radius: 10px; padding: 10px 15px; cursor: pointer; display: flex; align-items: center; box-shadow: 0 2px 5px rgba(0,0,0,0.2); white-space: nowrap; transition: background-color 0.2s; }
+                .gbs-fab-action-btn:hover { background-color: #007BFF; }
+                .gbs-fab-action-btn:disabled { opacity: 0.6; cursor: not-allowed; background-color: #343a40; }
+                .gbs-fab-action-btn.active { background-color: #A43535; color: white !important; }
+                .gbs-fab-action-btn.active:hover { background-color: #e74c3c; }
+            `);
+        },
+        collapseStatsByDefault: function() {
+            const toggleButton = document.querySelector('.profileToggleStats a');
+
+            if (toggleButton) {
+                toggleButton.click();
+            }
+        },
+        //--WIP--//
+        addClearMarkersCacheButton: function() {
+            const submenu = document.querySelector(Config.SELECTORS.galleryNavSubmenu);
+            if (!submenu) return;
+
+            const clearCacheLink = document.createElement('a');
+            clearCacheLink.href = '#';
+            clearCacheLink.textContent = 'Clear Post Markers Cache';
+            clearCacheLink.style.fontWeight = 'bold';
+
+            clearCacheLink.addEventListener('click', async (e) => {
+                e.preventDefault();
+                await PostMarkers.clearCache();
+                window.location.reload();
+            });
+
+            submenu.appendChild(clearCacheLink);
+        },
+        movePostActions: function() {
+            const mediaElementForBreak = document.querySelector('#gelcomVideoPlayer, #image');
+            if (mediaElementForBreak) {
+                const precedingElement = mediaElementForBreak.previousElementSibling;
+                if (precedingElement && precedingElement.tagName === 'BR') {
+                    precedingElement.remove();
+                }
+            }
+            const scrollbox = document.querySelector('#scrollebox');
+            const mediaElement = document.querySelector('#image, #gelcomVideoPlayer');
+
+            if (scrollbox && mediaElement) {
+                mediaElement.after(scrollbox);
+                scrollbox.style.marginTop = '10px';
+                scrollbox.style.paddingLeft = '10px';
+                scrollbox.style.paddingRight = '10px';
+                scrollbox.style.fontSize = '12px';
+                scrollbox.style.display = 'flex';
+                scrollbox.style.justifyContent = 'space-between';
+                scrollbox.style.alignItems = 'center';
+            }
+            const allH2s = document.querySelectorAll('h2');
+            const commentsHeader = Array.from(allH2s).find(h2 => h2.textContent.trim() === 'User Comments:');
+
+            const adLinkAnchor = document.querySelector('div > a[rel="nofollow"][target="_blank"]');
+            const adContainer = adLinkAnchor ? adLinkAnchor.parentElement : null;
+
+            if (adContainer && commentsHeader) {
+                commentsHeader.parentElement.insertBefore(adContainer, commentsHeader);
+            }
+
+            const mobileAdInnerDiv = document.querySelector('div[data-cl-spot]');
+            const mobileAdContainer = mobileAdInnerDiv ? mobileAdInnerDiv.closest('center') : null;
+
+            if (mobileAdContainer && commentsHeader) {
+                commentsHeader.parentElement.insertBefore(mobileAdContainer, commentsHeader);
+            }
+
+            const originalContentNodes = Array.from(scrollbox.childNodes);
+            scrollbox.innerHTML = '';
+            const leftContainer = document.createElement('span');
+            const rightContainer = document.createElement('span');
+
+            rightContainer.style.display = 'flex';
+            rightContainer.style.alignItems = 'center';
+            rightContainer.style.gap = '5px';
+
+            scrollbox.appendChild(leftContainer);
+            scrollbox.appendChild(rightContainer);
+            const prevLink = document.querySelector('a[onclick="navigatePrev();"]');
+            const nextLink = document.querySelector('a[onclick="navigateNext();"]');
+            if (prevLink && nextLink) {
+                const navContainer = prevLink.closest('div.alert');
+                nextLink.removeAttribute('style');
+                leftContainer.append('(', prevLink, ' / ', nextLink, ')');
+                if (navContainer) navContainer.remove();
+            }
+            originalContentNodes.forEach(node => {
+                rightContainer.appendChild(node);
+            });
+
+            const resizeLinkContainer = document.querySelector('#resize-link');
+            if (resizeLinkContainer) {
+                resizeLinkContainer.remove();
+            }
+        },
+        initPostPoolUI: function() {
+            const favoritePools = Settings.State.favoritePools || [];
+            if (favoritePools.length === 0) return;
+
+            const originalAddToPoolLink = document.querySelector('a[onclick*="addToPoolID"]');
+            if (originalAddToPoolLink) {
+                originalAddToPoolLink.closest('li')?.remove();
+            }
+
+            const rightContainer = document.querySelector('#scrollebox > span:last-child');
+            if (!rightContainer) return;
+
+            const container = document.createElement('span');
+            container.id = 'gbs-post-pool-container';
+            container.className = 'gbs-pool-action-container';
+
+            const badge = document.createElement('span');
+            badge.id = 'gbs-pool-count-badge';
+            badge.textContent = '...';
+            badge.style.display = 'none';
+
+            const addButton = document.createElement('button');
+            addButton.className = 'gbs-pool-action-button';
+            addButton.id = 'gbs-post-pool-add-btn';
+            addButton.textContent = 'Add to Pool';
+            addButton.disabled = true;
+
+            const removeButton = document.createElement('button');
+            removeButton.id = 'gbs-post-pool-remove-btn';
+            removeButton.className = 'gbs-pool-action-button';
+            removeButton.textContent = 'Remove from Pool';
+            removeButton.disabled = true;
+
+            container.append(addButton, removeButton, badge);
+            rightContainer.append(' | ', container);
+
+            this.refreshPostPoolUI();
+        },
+        refreshPostPoolUI: async function() {
+            const favoritePools = Settings.State.favoritePools || [];
+            const postId = new URL(window.location.href).searchParams.get('id');
+            const relationshipsLink = document.querySelector('a[href*="post-pool-list"]');
+
+            const badge = document.getElementById('gbs-pool-count-badge');
+            const addButton = document.getElementById('gbs-post-pool-add-btn');
+            const removeButton = document.getElementById('gbs-post-pool-remove-btn');
+
+            if (!postId || !relationshipsLink || !addButton || !badge || !removeButton) return;
+
+            addButton.disabled = true;
+            removeButton.disabled = true;
+            badge.style.display = 'none';
+
+            try {
+                const { promise } = Utils.makeRequest({ method: "GET", url: relationshipsLink.href });
+                const response = await promise;
+                const doc = new DOMParser().parseFromString(response.responseText, "text/html");
+                const currentPools = Array.from(doc.querySelectorAll('tbody tr a[href*="page=pool&s=show"]'))
+                    .map(link => ({
+                        id: new URL(link.href, window.location.origin).searchParams.get('id'),
+                        name: link.textContent.trim()
+                    }))
+                    .filter(p => p.id);
+
+                const currentPoolIds = new Set(currentPools.map(p => p.id));
+                const favoritePoolMap = new Map(favoritePools.map(p => [p.id, p]));
+
+                const matchingPools = currentPools.filter(p => favoritePoolMap.has(p.id));
+                const poolsToAdd = favoritePools.filter(p => !currentPoolIds.has(p.id));
+
+                if (matchingPools.length > 0) {
+                    badge.textContent = matchingPools.length;
+                    badge.style.display = 'inline-flex';
+                }
+
+                addButton.disabled = poolsToAdd.length === 0;
+                addButton.textContent = 'Add to Pool';
+                const newAddButton = addButton.cloneNode(true);
+                addButton.parentNode.replaceChild(newAddButton, addButton);
+                if (poolsToAdd.length > 0) {
+                    newAddButton.addEventListener('click', (e) => this.showPoolPopup(e, 'add', poolsToAdd));
+                }
+
+                removeButton.disabled = matchingPools.length === 0;
+                removeButton.textContent = 'Remove from Pool';
+                const newRemoveButton = removeButton.cloneNode(true);
+                removeButton.parentNode.replaceChild(newRemoveButton, removeButton);
+                if (matchingPools.length > 0) {
+                    newRemoveButton.addEventListener('click', (e) => this.showPoolPopup(e, 'remove', matchingPools));
+                }
+
+            } catch (error) {
+                Logger.error('Could not fetch pool relationships:', error);
+                badge.textContent = 'E';
+                badge.style.display = 'inline-flex';
+            }
+        },
+        showPoolPopup: function(event, type, poolList) {
+            event.stopPropagation();
+            if (this.State.currentPoolPopup) {
+                this.closePoolPopup();
+                return;
+            }
+
+            const button = event.currentTarget;
+            const postId = new URL(window.location.href).searchParams.get('id');
+            if (!postId || !poolList || poolList.length === 0) return;
+
+            const popup = document.createElement('div');
+            popup.className = 'gbs-pool-popup';
+
+            poolList.forEach(pool => {
+                const poolItem = document.createElement('div');
+                poolItem.className = 'gbs-pool-popup-item';
+                poolItem.textContent = pool.name;
+                poolItem.dataset.poolId = pool.id;
+
+                poolItem.addEventListener('click', async () => {
+                    const selectedPoolId = pool.id;
+                    button.textContent = '...';
+                    button.disabled = true;
+                    this.closePoolPopup();
+
+                    try {
+                        if (type === 'add') {
+                            const script = document.createElement('script');
+                            script.textContent = `(() => {
+                                const originalPrompt = window.prompt;
+                                window.prompt = () => '${selectedPoolId}';
+                                if (typeof addToPoolID === 'function') {
+                                    addToPoolID(${postId});
+                                }
+                                window.prompt = originalPrompt;
+                            })();`;
+                            document.body.appendChild(script).remove();
+                            await new Promise(r => setTimeout(r, 2000));
+                        } else {
+                            const removalUrl = `https://gelbooru.com/public/remove.php?removepool_post=1&pool_id=${selectedPoolId}&id=${postId}`;
+                            await Utils.makeRequest({
+                                method: "GET",
+                                url: removalUrl,
+                                headers: { "X-Requested-With": "XMLHttpRequest" }
+                            }).promise;
+                        }
+                    } catch (error) {
+                        Logger.error(`Failed to ${type} post from pool:`, error);
+                        alert(`Failed to ${type} post. Check console.`);
+                    } finally {
+                        this.refreshPostPoolUI();
+                    }
+                });
+                popup.appendChild(poolItem);
+            });
+
+            const btnRect = button.getBoundingClientRect();
+
+            const scrollY = window.scrollY || document.documentElement.scrollTop;
+            const scrollX = window.scrollX || document.documentElement.scrollLeft;
+
+            popup.style.position = 'absolute';
+            popup.style.left = `${scrollX + btnRect.left + (btnRect.width / 2)}px`;
+            popup.style.top = `${scrollY + btnRect.top - 4}px`;
+            popup.style.transform = 'translate(-50%, -100%)';
+
+            document.body.appendChild(popup);
+            this.State.currentPoolPopup = popup;
+
+            setTimeout(() => {
+                document.addEventListener('click', this.handleOutsidePopupClick, true);
+            }, 0);
+        },
+        scrollToActionBar: function() {
+            const scrollbox = document.querySelector('#scrollebox');
+
+            if (scrollbox) {
+                setTimeout(() => {
+                    scrollbox.style.scrollMarginBottom = '8px';
+
+                    scrollbox.scrollIntoView({
+                        behavior: 'smooth',
+                        block: 'end'
+                    });
+                }, 100);
+            }
+        },
+        setupScrollTrigger: function() {
+            if (document.visibilityState === 'visible') {
+                this.scrollToActionBar();
+            } else {
+                document.addEventListener('visibilitychange', () => {
+                    if (document.visibilityState === 'visible') {
+                        this.scrollToActionBar();
+                    }
+                }, { once: true });
+            }
+        },
+        adjustMediaHeight: function() {
+            const mediaElement = document.querySelector('#image, #gelcomVideoPlayer');
+            const scrollbox = document.querySelector('#scrollebox');
+            const topBar = document.querySelector('.searchArea');
+
+            if (mediaElement && scrollbox && topBar) {
+                const topBarHeight = topBar.offsetHeight;
+                const scrollboxHeight = scrollbox.offsetHeight;
+                const reservedSpace = topBarHeight + scrollboxHeight;
+
+                mediaElement.style.maxHeight = `calc(100vh - ${reservedSpace}px)`;
+            }
+        },
+        reorderPostSections: function() {
+            const fitImageLink = Array.from(document.querySelectorAll('#tag-list a'))
+                                      .find(a => a.textContent.trim() === 'Fit Image to Window');
+
+            if (fitImageLink) {
+                const listItem = fitImageLink.closest('li');
+                if (listItem) {
+                    listItem.remove();
+                }
+            }
+            const tagList = document.querySelector('#tag-list');
+            if (!tagList) { return;
+            }
+
+            const extractSection = (headerText) => {
+                const header = Array.from(tagList.querySelectorAll('h3')).find(h3 => h3.textContent.trim() === headerText);
+                if (!header) return [];
+
+                const sectionNodes = [];
+                let currentNode = header.parentElement;
+
+                while (currentNode) {
+                    sectionNodes.push(currentNode);
+                    const nextNode = currentNode.nextSibling;
+
+                    if (nextNode && nextNode.nodeName === 'LI' && nextNode.querySelector('h3')) {
+                        break;
+                    }
+                    currentNode = nextNode;
+                }
+                return sectionNodes;
+            };
+
+            const statsSection = extractSection('Statistics');
+            const optionsSection = extractSection('Options');
+
+            if (statsSection.length > 0 && optionsSection.length > 0) {
+                [...statsSection, ...optionsSection].forEach(node => node.remove());
+                tagList.prepend(...statsSection, ...optionsSection);
+            }
+        },
+        //--WIP--//
+        setupGalleryHotkeys: function() {
+            document.addEventListener('keydown', e => {
+                const activeEl = document.activeElement;
+                if (activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA' || activeEl === document.getElementById(Config.SELECTORS.PREVIEW_CONTAINER_ID) || activeEl.closest(`#${Config.SELECTORS.ADVANCED_SEARCH_MODAL_ID}`)) return;
+
+                const currentPageElement = document.querySelector(Config.SELECTORS.PAGINATION_CURRENT_SELECTOR);
+                if (!currentPageElement) return;
+                let targetLink = null;
+                if (e.key === Settings.State.KEY_GALLERY_NEXT_PAGE) {
+                    targetLink = currentPageElement.nextElementSibling;
+                } else if (e.key === Settings.State.KEY_GALLERY_PREV_PAGE) {
+                    targetLink = currentPageElement.previousElementSibling;
+                }
+                if (targetLink?.tagName === 'A') {
+                    window.location.href = targetLink.href;
+                }
+            });
+        },
+        async init() {
+            await Settings.load();
+
+            const isGalleryPage = !!document.querySelector(Config.SELECTORS.THUMBNAIL_GRID_SELECTOR);
+            const contentElement = document.querySelector(Config.SELECTORS.IMAGE_SELECTOR) || document.querySelector(Config.SELECTORS.VIDEO_PLAYER_SELECTOR);
+            const isPostPage = contentElement && !contentElement.closest('.thumbnail-preview');
+            const isAccountPage = window.location.search.includes('page=account');
+
+            if (isPostPage) {
+                GlobalState.pageType = 'post';
+            } else if (isGalleryPage) {
+                GlobalState.pageType = 'gallery';
+            } else if (isAccountPage) {
+                GlobalState.pageType = 'account';
+            }
+
+            this.addGlobalStyles();
+            GM_registerMenuCommand('Suite Settings', () => Settings.UI.openModal());
+
+            if (GlobalState.pageType === 'account') {
+                this.collapseStatsByDefault();
+            }
+
+            if (GlobalState.pageType === 'gallery') {
+                this.setupGalleryHotkeys();
+
+                if (Settings.State.ENABLE_ADVANCED_SEARCH) {
+                    AdvancedSearch.init();
+                }
+                if (Settings.State.ENABLE_PEEK_PREVIEWS) {
+                    Peek.init();
+                }
+                if (Settings.State.ENABLE_ADD_TO_POOL) {
+                    await AddToPool.init();
+                }
+                if (Settings.State.ENABLE_DOWNLOADER) {
+                    Downloader.init();
+                }
+                if (Settings.State.ENABLE_POST_MARKERS) {
+                    PostMarkers.init();
+                    this.addClearMarkersCacheButton();
+                }
+            }
+
+            if (GlobalState.pageType === 'post') {
+                this.movePostActions();
+                this.reorderPostSections();
+                this.initPostPoolUI();
+                this.adjustMediaHeight();
+                this.setupScrollTrigger();
+            }
+
+            MediaViewer.init();
+            Logger.log("Gelbooru Suite initialized.");
+        }
+    };
+
+    // =================================================================================
+    // SCRIPT ENTRY POINT
+    // =================================================================================
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', App.init.bind(App));
+    } else {
+        App.init();
+    }
+})();
+
+//in beta...
