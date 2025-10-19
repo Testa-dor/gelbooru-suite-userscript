@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name        Gelbooru Suite
 // @namespace   GelbooruEnhancer
-// @version     2.1.6
+// @version     2.1.1
 // @description Enhances Gelbooru with thumbnail previews, a categorized pop-up search, an immersive viewer, pool markers, and more.
 // @author      Testador (Refactored by Gemini)
 // @match       *://gelbooru.com/*
@@ -512,7 +512,7 @@
                     <div class="setting-item"><label for="setting-peek-previews">Enable Previews</label><label class="toggle-switch"><input type="checkbox" id="setting-peek-previews"><span class="toggle-slider"></span></label></div>
                     <div class="setting-item"><label for="setting-add-to-pool">Enable Add to Pool</label><label class="toggle-switch"><input type="checkbox" id="setting-add-to-pool"><span class="toggle-slider"></span></label></div>
                     <div class="setting-item"><label for="setting-downloader">Enable Downloader</label><label class="toggle-switch"><input type="checkbox" id="setting-downloader"><span class="toggle-slider"></span></label></div>
-                    <div class="setting-item"><label for="setting-post-markers">Enable Post Markers (Pools & Favs)</label><label class="toggle-switch"><input type="checkbox" id="setting-post-markers"><span class="toggle-slider"></span></label></div>
+                    <div class="setting-item"><label for="setting-post-markers">Enable Post Markers</label><label class="toggle-switch"><input type="checkbox" id="setting-post-markers"><span class="toggle-slider"></span></label></div>
                     <div class="setting-item"><label for="setting-hide-scrollbars">Hide Page Scrollbars (Global)</label><label class="toggle-switch"><input type="checkbox" id="setting-hide-scrollbars"><span class="toggle-slider"></span></label></div>
                     <hr class="setting-divider">
                     <div class="setting-item-vertical">
@@ -1320,7 +1320,7 @@
             GM_addStyle(`
                 .thumbnail-preview > a { position: relative !important; }
                 .gbs-pool-marker-container { position: absolute; display: flex; gap: 4px; pointer-events: auto; margin-top: 3px; left: 50%; transform: translateX(-50%); body.gbs-viewer-mode-active & { display: none !important; } }
-                .gbs-pool-marker { width: 12px; height: 5px; border-radius: 10px; border: 2px solid black; box-shadow: 0 0 4px rgba(0,0,0,0.8); cursor: help; }
+                .gbs-pool-marker { width: 18px; height: 5px; border-radius: 10px; box-shadow: 2px 2px 6px rgb(0,0,0); }
                 .gbs-favorite-marker { position: absolute; top: 3px; right: 3px; font-size: 14px; color: #daa520; pointer-events: none; padding: 4px 5px; box-shadow: 0 0 4px rgba(0,0,0,0.8); border-radius: 10px; background-color: rgba(37, 37, 37, 0.9); border: 2px solid rgba(37, 37, 37, 0.2); body.gbs-viewer-mode-active & { display: none !important; } }
             `);
         },
@@ -1427,7 +1427,6 @@
                         const marker = document.createElement('div');
                         marker.className = 'gbs-pool-marker';
                         marker.style.backgroundColor = poolInfo.color;
-                        marker.title = `In pool: ${poolInfo.name}`;
                         container.appendChild(marker);
                     });
                 }
@@ -2209,7 +2208,7 @@
     // =================================================================================
     const AddToPool = {
         State: {
-            isSelectionModeActive: false,
+            selectionMode: null,
             favoritePools: [],
             activePoolId: null,
         },
@@ -2240,15 +2239,39 @@
             if (!selector) return;
             selector.innerHTML = '';
 
+            const defaultBgColor = '#343a40';
+            selector.style.backgroundColor = defaultBgColor;
+
             this.State.favoritePools.forEach(pool => {
                 const option = document.createElement('option');
                 option.value = pool.id;
                 option.textContent = pool.name;
+
+                const poolColor = pool.color || defaultBgColor;
+                option.style.backgroundColor = poolColor;
+                option.style.color = this._getContrastingTextColor(poolColor);
+
                 if (pool.id === this.State.activePoolId) {
                     option.selected = true;
                 }
                 selector.appendChild(option);
             });
+
+            this._updatePoolSelectorColor();
+        },
+        _getContrastingTextColor(hex) {
+            if (!hex) return '#FFFFFF';
+            const r = parseInt(hex.slice(1, 3), 16);
+            const g = parseInt(hex.slice(3, 5), 16);
+            const b = parseInt(hex.slice(5, 7), 16);
+            const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+            return luminance > 0.5 ? '#111111' : '#FFFFFF';
+        },
+        _updatePoolSelectorColor() {
+            if (!this.elements.poolSelector || !this.State.activePoolId) return;
+            const selectedPool = this.State.favoritePools.find(p => p.id === this.State.activePoolId);
+            const color = selectedPool ? (selectedPool.color || '#FFFFFF') : '#FFFFFF';
+            this.elements.poolSelector.style.borderLeftColor = color;
         },
         injectUI() {
             GM_addStyle(`
@@ -2257,14 +2280,19 @@
             #gbs-pool-wrapper:hover #gbs-pool-trigger { background-color: #007BFF; }
             #gbs-pool-wrapper.menu-open #gbs-pool-trigger { background-color: #A43535; }
             #gbs-pool-trigger.is-blocked { cursor: not-allowed; }
-            #gbs-pool-action-list { position: absolute; top: 50%; left: 100%; transform: translateY(-50%) scale(0.95); margin-left: 15px; gap: 8px; display: flex; flex-direction: column; align-items: flex-start; opacity: 0; transition: opacity 0.2s ease, transform 0.2s ease; pointer-events: none; }
+            #gbs-pool-action-list { position: absolute; top: 50%; left: 100%; transform: translateY(-50%) scale(0.95); margin-left: 15px; gap: 5px; display: flex; flex-direction: column; align-items: flex-start; opacity: 0; transition: opacity 0.2s ease, transform 0.2s ease; pointer-events: none; width: 168px; /* Largura fixa para os botões */ }
             #gbs-pool-wrapper.menu-open #gbs-pool-action-list { opacity: 1; transform: translateY(-50%) scale(1); pointer-events: auto; }
-            #gbs-pool-selector { background-color: #343a40; color: #fff; border: none; border-radius: 10px; padding: 11px 12px; font-weight: bold; cursor: pointer; width: 168px; }
             #gbs-pool-selector:focus { outline: none; border-color: #007BFF; }
+            #gbs-pool-selector { background-color: #343a40; color: #fff; border: none; border-radius: 10px; font-weight: bold; cursor: pointer; width: 100%; box-sizing: border-box; padding: 11px 12px 11px 4px; border-left: 8px solid transparent; transition: border-left-color 0.2s ease-in-out; }
             body.gbs-pool-select-mode-active .thumbnail-preview img,
             body.gbs-pool-select-mode-active .thumbnail-container > span > a { cursor: crosshair !important; }
             .thumbnail-container > span > a { display: inline-block; line-height: 0; }
             .gbs-pool-add-notification { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0, 132, 80, 0.8); color: white; display: flex; align-items: center; justify-content: center; font-weight: bold; z-index: 10; border-radius: 10px; pointer-events: none; opacity: 0; transition: opacity 0.3s; }
+            .gbs-pool-remove-notification { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: rgba(164, 53, 53, 0.8); color: white; display: flex; align-items: center; justify-content: center; font-weight: bold; z-index: 10; border-radius: 10px; pointer-events: none; opacity: 0; transition: opacity 0.3s; }
+            #gbs-pool-button-container { display: flex; gap: 5px; width: 100%; }
+            #gbs-pool-remove-mode-btn { background-color: #A43535; }
+            #gbs-pool-remove-mode-btn:hover { background-color: #e74c3c; }
+            #gbs-pool-cancel-btn { width: 100%; box-sizing: border-box; }
         `);
 
             const wrapper = document.createElement('div');
@@ -2273,8 +2301,18 @@
             <div id="gbs-pool-trigger"></div>
             <div id="gbs-pool-action-list">
                 <select id="gbs-pool-selector"></select>
-                <button id="gbs-pool-add-mode-btn" class="gbs-fab-action-btn">
-                    <span class="gbs-fab-text">Add to Pool (Select)</span>
+
+                <div id="gbs-pool-button-container">
+                    <button id="gbs-pool-add-mode-btn" class="gbs-fab-action-btn" style="flex: 1; min-width: 0; padding: 10px 5px;">
+                        <span class="gbs-fab-text">Add</span>
+                    </button>
+                    <button id="gbs-pool-remove-mode-btn" class="gbs-fab-action-btn" style="flex: 1; min-width: 0; padding: 10px 5px;">
+                        <span class="gbs-fab-text">Remove</span>
+                    </button>
+                </div>
+
+                <button id="gbs-pool-cancel-btn" class="gbs-fab-action-btn active" style="display: none;">
+                    <span class="gbs-fab-text">Cancel</span>
                 </button>
             </div>
         `;
@@ -2284,12 +2322,15 @@
                 wrapper,
                 trigger: wrapper.querySelector('#gbs-pool-trigger'),
                 addModeButton: wrapper.querySelector('#gbs-pool-add-mode-btn'),
+                removeModeButton: wrapper.querySelector('#gbs-pool-remove-mode-btn'),
+                cancelButton: wrapper.querySelector('#gbs-pool-cancel-btn'),
+                buttonContainer: wrapper.querySelector('#gbs-pool-button-container'),
                 poolSelector: wrapper.querySelector('#gbs-pool-selector'),
             };
         },
         setupEventListeners() {
             this.elements.trigger.addEventListener('click', (event) => {
-                if (this.State.isSelectionModeActive) return;
+                if (this.State.selectionMode) return;
                 event.stopPropagation();
                 this.elements.wrapper.classList.toggle('menu-open');
             });
@@ -2297,30 +2338,43 @@
             this.elements.poolSelector.addEventListener('change', (e) => {
                 this.State.activePoolId = e.target.value;
                 Logger.log(`[AddToPool] Active pool set to ID: ${this.State.activePoolId}`);
+                this._updatePoolSelectorColor();
             });
 
             this.elements.addModeButton.addEventListener('click', (e) => {
                 e.preventDefault();
-                this.toggleSelectionMode();
+                this.toggleSelectionMode('add');
+            });
+
+            this.elements.removeModeButton.addEventListener('click', (e) => {
+                e.preventDefault();
+                this.toggleSelectionMode('remove');
+            });
+
+            this.elements.cancelButton.addEventListener('click', (e) => {
+                e.preventDefault();
+                this.toggleSelectionMode(null);
             });
         },
-        toggleSelectionMode() {
-            this.State.isSelectionModeActive = !this.State.isSelectionModeActive;
-            const buttonText = this.elements.addModeButton.querySelector('.gbs-fab-text');
+        toggleSelectionMode(mode) {
+            this.State.selectionMode = mode;
 
-            this.elements.addModeButton.classList.toggle('active', this.State.isSelectionModeActive);
-            this.elements.trigger.classList.toggle('is-blocked', this.State.isSelectionModeActive);
-            document.body.classList.toggle('gbs-pool-select-mode-active', this.State.isSelectionModeActive);
+            const isModeActive = (mode === 'add' || mode === 'remove');
+            const buttonText = this.elements.cancelButton.querySelector('.gbs-fab-text');
 
-            if (this.State.isSelectionModeActive) {
-                buttonText.textContent = 'Cancel';
+            this.elements.buttonContainer.style.display = isModeActive ? 'none' : 'flex';
+            this.elements.cancelButton.style.display = isModeActive ? 'block' : 'none';
+            this.elements.trigger.classList.toggle('is-blocked', isModeActive);
+            document.body.classList.toggle('gbs-pool-select-mode-active', isModeActive);
+
+            if (isModeActive) {
+                buttonText.textContent = (mode === 'add') ? 'Cancel (Adding)' : 'Cancel (Removing)';
                 document.body.addEventListener('click', this.handleThumbnailClick, true);
 
                 GlobalState.previewsTemporarilyDisabled = true;
                 document.querySelectorAll(Config.SELECTORS.THUMBNAIL_GRID_SELECTOR).forEach(grid => Peek.cleanupThumbnailFeatures(grid));
-                Logger.log("[AddToPool] Selection mode activated. Disabling Peek Previews.");
+                Logger.log(`[AddToPool] Selection mode '${mode}' activated. Disabling Peek Previews.`);
             } else {
-                buttonText.textContent = 'Add to Pool (Select)';
                 document.body.removeEventListener('click', this.handleThumbnailClick, true);
 
                 GlobalState.previewsTemporarilyDisabled = false;
@@ -2328,9 +2382,9 @@
                 Logger.log("[AddToPool] Selection mode deactivated. Re-enabling Peek Previews.");
             }
         },
-        handleThumbnailClick: (event) => {
+        handleThumbnailClick: async (event) => {
             const self = AddToPool;
-            if (!self.State.isSelectionModeActive) return;
+            if (!self.State.selectionMode) return;
 
             const thumbAnchor = event.target.closest(Config.SELECTORS.MEDIA_VIEWER_THUMBNAIL_ANCHOR);
             if (!thumbAnchor) return;
@@ -2347,27 +2401,53 @@
             const postId = Utils.getPostId(thumbAnchor.href);
             if (!postId) return;
 
-            const script = document.createElement('script');
-            script.textContent = `(() => {
-                const originalPrompt = window.prompt;
-                window.prompt = () => '${self.State.activePoolId}'; // Usa o ID do pool ativo
-                if (typeof addToPoolID === 'function') {
-                    addToPoolID(${postId});
-                }
-                window.prompt = originalPrompt;
-            })();`;
-            document.body.appendChild(script).remove();
+            let notificationClass = '';
+            let notificationText = '';
 
-            const notif = document.createElement('div');
-            notif.className = 'gbs-pool-add-notification';
-            notif.textContent = 'Added!';
-            thumbAnchor.style.position = 'relative';
-            thumbAnchor.appendChild(notif);
-            setTimeout(() => { notif.style.opacity = '1'; }, 10);
-            setTimeout(() => {
-                notif.style.opacity = '0';
-                setTimeout(() => notif.remove(), 300);
-            }, 1500);
+            try {
+                if (self.State.selectionMode === 'add') {
+                    const script = document.createElement('script');
+                    script.textContent = `(() => {
+                        const originalPrompt = window.prompt;
+                        window.prompt = () => '${self.State.activePoolId}';
+                        if (typeof addToPoolID === 'function') {
+                            addToPoolID(${postId});
+                        }
+                        window.prompt = originalPrompt;
+                    })();`;
+                    document.body.appendChild(script).remove();
+
+                    notificationClass = 'gbs-pool-add-notification';
+                    notificationText = 'Added!';
+
+                } else if (self.State.selectionMode === 'remove') {
+                    const removalUrl = `https://gelbooru.com/public/remove.php?removepool_post=1&pool_id=${self.State.activePoolId}&id=${postId}`;
+                    await Utils.makeRequest({
+                        method: "GET",
+                        url: removalUrl,
+                        headers: { "X-Requested-With": "XMLHttpRequest" }
+                    }).promise;
+
+                    notificationClass = 'gbs-pool-remove-notification';
+                    notificationText = 'Removed!';
+                }
+
+                if (notificationClass) {
+                    const notif = document.createElement('div');
+                    notif.className = notificationClass;
+                    notif.textContent = notificationText;
+                    thumbAnchor.style.position = 'relative';
+                    thumbAnchor.appendChild(notif);
+                    setTimeout(() => { notif.style.opacity = '1'; }, 10);
+                    setTimeout(() => {
+                        notif.style.opacity = '0';
+                        setTimeout(() => notif.remove(), 300);
+                    }, 1500);
+                }
+
+            } catch (error) {
+                Logger.error(`Failed to ${self.State.selectionMode} post ${postId} from pool ${self.State.activePoolId}:`, error);
+            }
         },
         toggleVisibility: function(visible) {
             const wrapper = document.getElementById('gbs-pool-wrapper');
@@ -2852,7 +2932,7 @@
                     actionButtonsContainer.className = 'gbs-action-buttons-container';
                     actionButtonsContainer.style.position = 'relative';
 
-                    // --- Favorite Button ---
+                    // Favorite Button
                     const favoritesLi = Array.from(tagListElement.querySelectorAll('li a')).find(a => a.textContent.includes('Add to favorites') || a.textContent.includes('Unfavorite'))?.closest('li');
                     if (favoritesLi) {
                         const favoritesLink = favoritesLi.querySelector('a');
@@ -2868,7 +2948,7 @@
                         favoritesLi.remove();
                     }
 
-                    // --- Add to Pool Button ---
+                    // Add to Pool Button
                     const poolLi = Array.from(tagListElement.querySelectorAll('li a')).find(a => a.textContent.includes('Add to Pool'))?.closest('li');
                     if (poolLi && Settings.State.favoritePools && Settings.State.favoritePools.length > 0) {
                         const poolButton = document.createElement('div');
@@ -3036,7 +3116,6 @@
                 toggleButton.click();
             }
         },
-        //--WIP--//
         addClearMarkersCacheButton: function() {
             const submenu = document.querySelector(Config.SELECTORS.galleryNavSubmenu);
             if (!submenu) return;
@@ -3370,7 +3449,6 @@
                 tagList.prepend(...statsSection, ...optionsSection);
             }
         },
-        //--WIP--//
         setupGalleryHotkeys: function() {
             document.addEventListener('keydown', e => {
                 const activeEl = document.activeElement;
