@@ -8,7 +8,7 @@
 <li><strong style="color: #e95757;">Full Video Controls:</strong> Preview videos come with a seek bar and keyboard shortcuts (<code>Space</code> to play/pause, <code>Arrow Keys</code> to seek) for quick control.</li>
   <br>
 <p align="center">
-  <a href="https://files.catbox.moe/xu36a8.mp4">
+  <a href="https://files.catbox.moe/xu36a8.mp4" target="_blank">
     <img src="https://img.shields.io/badge/Click to see video preview-697da0?" width=300>
 </a>
 </p>
