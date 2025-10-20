@@ -59,6 +59,6 @@
 <hr>
 <center>
 <p>Got questions or feedback? Drop a comment.
-<p><a href="https://discord.com/users/374316521960505354"><img src="https://img.shields.io/badge/Discord-5865F2?logo=discord&logoColor=white" alt="Discord"></a> <a href="https://www.reddit.com/user/RepairNo8377/"><img src="https://img.shields.io/badge/Reddit-FF4500?logo=reddit&logoColor=white" alt="Reddit"></a> <a href="https://www.youtube.com/@Testa-dor"><img src="https://img.shields.io/badge/Youtube-FF0000?logo=youtube&logoColor=white" alt="YouTube"></a> <a href="https://greasyfork.org/en/scripts/543652-gelbooru-suite?locale_override=1"><img src="https://img.shields.io/badge/Greasy Fork-111111?logo=greasyfork&logoColor=white" alt="Greasy Fork"></a>
+<p><a href="https://discord.com/users/374316521960505354"><img src="https://img.shields.io/badge/Discord-5865F2?logo=discord&logoColor=white" alt="Discord"></a> <a href="https://www.reddit.com/user/RepairNo8377/"><img src="https://img.shields.io/badge/Reddit-FF4500?logo=reddit&logoColor=white" alt="Reddit"></a> <a href="https://youtu.be/Zt2vB-4LpFU?si=Kr70KyAwIav6pdhr"><img src="https://img.shields.io/badge/Youtube-FF0000?logo=youtube&logoColor=white" alt="YouTube"></a> <a href="greasyfork.org/scripts/543652"><img src="https://img.shields.io/badge/Greasy Fork-111111?logo=greasyfork&logoColor=white" alt="Greasy Fork"></a>
 </p>
 <small style="color:#aaa;"><sup>Created by Testador, refactored by Gemini. Licensed under the MIT License.</small></p>
