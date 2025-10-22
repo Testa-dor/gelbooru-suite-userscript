@@ -66,7 +66,7 @@
 <li><strong style="color: #e95757;">Add to Pool:</strong> Quickly add or remove posts from your favorite pools. Configure up to 5 pools, select your target, choose an action (Add/Remove), and just click any thumbnail to manage it.</li>
   <br>
 <p align="center">
-  <a href="https://files.catbox.moe/q2k5vj.mp4">
+  <a href="https://files.catbox.moe/vff21o.mp4">
     <img src="https://img.shields.io/badge/Click to see video preview-697da0?" width=300>
 </a>
 </p>
