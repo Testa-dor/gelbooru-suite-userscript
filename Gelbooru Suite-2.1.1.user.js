@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name        Gelbooru Suite
 // @namespace   GelbooruEnhancer
-// @version     2.1.1
+// @version     2.1.4
 // @description Enhances Gelbooru with thumbnail previews, a categorized pop-up search, an immersive viewer, pool markers, and more.
 // @author      Testador (Refactored by Gemini)
 // @match       *://gelbooru.com/*
@@ -15,6 +15,8 @@
 // @grant       GM_openInTab
 // @license     MIT
 // @run-at      document-idle
+// @downloadURL https://update.sleazyfork.org/scripts/543652/Gelbooru%20Suite.user.js
+// @updateURL https://update.sleazyfork.org/scripts/543652/Gelbooru%20Suite.meta.js
 // ==/UserScript==
 
 /* global navigatePrev, navigateNext */
@@ -31,7 +33,7 @@
             AUTOCOMPLETE: 'https://gelbooru.com/index.php?page=autocomplete2&type=tag_query&limit=10',
         },
         DEFAULT_SETTINGS: {
-            DEBUG: true,
+            DEBUG: false,
             // --- Global Toggles ---
             ENABLE_ADVANCED_SEARCH: true,
             ENABLE_PEEK_PREVIEWS: true,
@@ -2131,12 +2133,13 @@
         },
         injectUI: function() {
             GM_addStyle(`
-            #gbs-downloader-wrapper { position: fixed; top: 50%; left: 0; transform: translateY(-50%); z-index: 9998; }
-            #gbs-downloader-trigger { width: 18px; height: 50px; background-color: #252525; border-radius: 0 10px 10px 0; cursor: pointer; border: 2px solid #333; border-left: none; transition: background-color 0.2s ease; }
-            #gbs-downloader-wrapper:hover #gbs-downloader-trigger { background-color: #007BFF; }
-            #gbs-downloader-wrapper.menu-open #gbs-downloader-trigger { background-color: #A43535; }
-            #gbs-downloader-trigger.is-blocked { cursor: not-allowed; }
-            #gbs-action-list { position: absolute; top: 50%; left: 100%; transform: translateY(-50%) scale(0.95); margin-left: 15px; display: flex; flex-direction: column; align-items: flex-start; gap: 5px; opacity: 0; transition: opacity 0.2s ease, transform 0.2s ease; pointer-events: none; }
+            #gbs-downloader-wrapper { position: fixed; top: 40%; right: 4px; z-index: 9998; }
+            #gbs-downloader-trigger { color: #fff !important; position: static; transform: none; width: 45px; height: 45px; padding: 5px; background-color: rgba(37, 37, 37, 0.8); border: 2px solid rgba(51, 51, 51, 0.5); border-radius: 10px; cursor: pointer; font-size: 18px; display: flex; align-items: center; justify-content: center; transition: background-color 0.2s ease, border-color 0.2s ease; box-sizing: border-box !important; }
+            #gbs-downloader-wrapper:hover #gbs-downloader-trigger, #gbs-downloader-trigger:hover { background-color: #006FFA; border-color: #006FFA; }
+            #gbs-downloader-wrapper.menu-open #gbs-downloader-trigger { background-color: rgba(37, 37, 37, 0.8); border-color: rgba(51, 51, 51, 0.5); }
+            #gbs-downloader-wrapper.menu-open #gbs-downloader-trigger:hover { background-color: #A43535; border-color: #A43535; }
+            #gbs-downloader-trigger.is-blocked { cursor: not-allowed !important; background-color: rgba(37, 37, 37, 0.8) !important; border-color: rgba(51, 51, 51, 0.5) !important; opacity: 0.6; }
+            #gbs-action-list { position: absolute; top: 50%; right: 100%; transform: translateY(-50%) scale(0.95); margin-right: 15px; display: flex; flex-direction: column; align-items: flex-end; gap: 5px; opacity: 0; transition: opacity 0.2s ease, transform 0.2s ease; pointer-events: none; }
             #gbs-downloader-wrapper.menu-open #gbs-action-list { opacity: 1; transform: translateY(-50%) scale(1); pointer-events: auto; }
             .gbs-selection-active body, .gbs-selection-active .thumbnail-preview a, .gbs-selection-active .thumbnail-container > span > a { cursor: crosshair !important; }
             .thumbnail-preview > a, .thumbnail-container > span > a { display:inline-block; line-height:0; position:relative; transition:transform 0.2s, box-shadow 0.2s; }
@@ -2158,7 +2161,7 @@
 
             document.body.insertAdjacentHTML('beforeend', `
             <div id="gbs-downloader-wrapper">
-                <div id="gbs-downloader-trigger"></div>
+                <button id="gbs-downloader-trigger" title="Downloader Menu"><i class="fas fa-download"></i></button>
                 <div id="gbs-action-list">
                     <button id="gbs-fab-download-all" class="gbs-fab-action-btn"><span class="gbs-fab-text">Download All</span></button>
                     <button id="gbs-fab-select" class="gbs-fab-action-btn"><span class="gbs-fab-text">Download (Select)</span></button>
@@ -2275,12 +2278,13 @@
         },
         injectUI() {
             GM_addStyle(`
-            #gbs-pool-wrapper { position: fixed; top: 30%; left: 0; transform: translateY(-50%); z-index: 9998; }
-            #gbs-pool-trigger { width: 18px; height: 50px; background-color: #252525; border-radius: 0 10px 10px 0; cursor: pointer; border: 2px solid #333; border-left: none; transition: background-color 0.2s ease; }
-            #gbs-pool-wrapper:hover #gbs-pool-trigger { background-color: #007BFF; }
-            #gbs-pool-wrapper.menu-open #gbs-pool-trigger { background-color: #A43535; }
-            #gbs-pool-trigger.is-blocked { cursor: not-allowed; }
-            #gbs-pool-action-list { position: absolute; top: 50%; left: 100%; transform: translateY(-50%) scale(0.95); margin-left: 15px; gap: 5px; display: flex; flex-direction: column; align-items: flex-start; opacity: 0; transition: opacity 0.2s ease, transform 0.2s ease; pointer-events: none; width: 168px; /* Largura fixa para os botões */ }
+            #gbs-pool-wrapper { position: fixed; top: 60%; right: 4px; z-index: 9998; }
+            #gbs-pool-trigger { color: #fff !important; position: static; transform: none; width: 45px; height: 45px; padding: 5px; background-color: rgba(37, 37, 37, 0.8); border: 2px solid rgba(51, 51, 51, 0.5); border-radius: 10px; cursor: pointer; font-size: 18px; display: flex; align-items: center; justify-content: center; transition: background-color 0.2s ease, border-color 0.2s ease; box-sizing: border-box !important; }
+            #gbs-pool-wrapper:hover #gbs-pool-trigger, #gbs-pool-trigger:hover { background-color: #006FFA; border-color: #006FFA; }
+            #gbs-pool-wrapper.menu-open #gbs-pool-trigger { background-color: rgba(37, 37, 37, 0.8); border-color: rgba(51, 51, 51, 0.5); }
+            #gbs-pool-wrapper.menu-open #gbs-pool-trigger:hover { background-color: #A43535; border-color: #A43535; }
+            #gbs-pool-trigger.is-blocked { cursor: not-allowed !important; background-color: rgba(37, 37, 37, 0.8) !important; border-color: rgba(51, 51, 51, 0.5) !important; opacity: 0.6; }
+            #gbs-pool-action-list { position: absolute; top: 50%; right: 100%; transform: translateY(-50%) scale(0.95); margin-right: 15px; gap: 5px; display: flex; flex-direction: column; align-items: flex-end; opacity: 0; transition: opacity 0.2s ease, transform 0.2s ease; pointer-events: none; width: 155px; }
             #gbs-pool-wrapper.menu-open #gbs-pool-action-list { opacity: 1; transform: translateY(-50%) scale(1); pointer-events: auto; }
             #gbs-pool-selector:focus { outline: none; border-color: #007BFF; }
             #gbs-pool-selector { background-color: #343a40; color: #fff; border: none; border-radius: 10px; font-weight: bold; cursor: pointer; width: 100%; box-sizing: border-box; padding: 11px 12px 11px 4px; border-left: 8px solid transparent; transition: border-left-color 0.2s ease-in-out; }
@@ -2298,7 +2302,7 @@
             const wrapper = document.createElement('div');
             wrapper.id = 'gbs-pool-wrapper';
             wrapper.innerHTML = `
-            <div id="gbs-pool-trigger"></div>
+            <button id="gbs-pool-trigger" title="Add to Pool Menu"><i class="fas fa-folder-plus"></i></button>
             <div id="gbs-pool-action-list">
                 <select id="gbs-pool-selector"></select>
 
@@ -2501,21 +2505,21 @@
             .gbs-viewer-nav-btn { font-size: 24px; cursor: pointer; }
             .gbs-viewer-nav-btn:hover { background-color: #333; border-color: #333; }
             #gbs-viewer-nav-counter { font-size: 14px; font-weight: bold; user-select: none; height: 30px;}
-            #gbs-viewer-nav-container { position: fixed; top: 80%; left: 4px; z-index: 99999; display: none; flex-direction: column; gap: 5px; }
+            #gbs-viewer-nav-container { position: fixed; top: 80%; right: 4px; z-index: 99999; display: none; flex-direction: column; gap: 5px; }
             #gbs-viewer-nav-container.visible { display: flex; }
 
-            #gbs-viewer-top-controls { position: fixed; top: 4%; left: 4px; z-index: 99999; display: flex; flex-direction: column; gap: 10px; }
-            #gbs-viewer-btn, #gbs-viewer-show-info-btn, #gbs-viewer-open-post-btn { color: #fff !important; position: static; transform: none; width: 45px; height: 45px; padding: 5px; background-color: rgba(37, 37, 37, 0.8); backdrop-filter: blur(5px); border: 2px solid rgba(51, 51, 51, 0.5); border-radius: 10px; cursor: pointer; font-size: 18px; display: flex; align-items: center; justify-content: center; transition: background-color 0.2s ease, border-color 0.2s ease, color 0.2s ease; }
+            #gbs-viewer-top-controls { position: fixed; top: 50%; right: 4px; z-index: 99999; display: flex; flex-direction: column; gap: 10px; }
+            #gbs-viewer-btn, #gbs-viewer-show-info-btn, #gbs-viewer-open-post-btn { color: #fff !important; position: static; transform: none; width: 45px; height: 45px; padding: 5px; background-color: rgba(37, 37, 37, 0.8); border: 2px solid rgba(51, 51, 51, 0.5); border-radius: 10px; cursor: pointer; font-size: 18px; display: flex; align-items: center; justify-content: center; transition: background-color 0.2s ease, border-color 0.2s ease, color 0.2s ease; }
             #gbs-viewer-show-info-btn, #gbs-viewer-open-post-btn { display: none; }
             #gbs-viewer-btn:hover, #gbs-viewer-show-info-btn:hover, #gbs-viewer-open-post-btn:hover { background-color: #006FFA; border-color: #006FFA; }
             #gbs-viewer-btn.active { background-color: rgba(37, 37, 37, 0.8); border-color: rgba(51, 51, 51, 0.5); }
             #gbs-viewer-btn.active:hover { background-color: #A43535; border-color: #A43535; }
             #gbs-viewer-show-info-btn.active { color: #006FFA !important; border-color: #006FFA; }
-            #gbs-viewer-show-info-btn:hover { color: white; }
+            #gbs-viewer-show-info-btn.active:hover { color: white !important; }
             #gbs-viewer-top-controls, #gbs-viewer-nav-container { transition: opacity 0.3s ease-in-out; }
 
-            #gbs-viewer-info-sidebar { position: fixed !important; top: 0; right: -280px; width: 250px; height: 100vh; background-color: #1f1f1f; border-left: 2px solid #333; z-index: 99999; padding: 2px; box-sizing: border-box; overflow-y: auto; transition: right 0.3s ease-in-out; }
-            #gbs-viewer-info-sidebar.visible { right: 0; }
+            #gbs-viewer-info-sidebar { position: fixed !important; top: 0; left: -280px; width: 250px; height: 100vh; background-color: #1f1f1f; border-right: 2px solid #333; z-index: 99999; padding: 2px; box-sizing: border-box; overflow-y: auto; transition: left 0.3s ease-in-out; }
+            #gbs-viewer-info-sidebar.visible { left: 0; }
             #gbs-viewer-info-sidebar .tag-list { position: absolute !important; width: 90%; box-sizing: border-box; word-wrap: break-word; padding: 0px; border: 0 !important; }
             #gbs-viewer-info-sidebar .tag-type-artist a { color: #AA0000 !important; }
             #gbs-viewer-info-sidebar .tag-type-character a { color: #00AA00 !important; }
@@ -2801,8 +2805,16 @@
                                 Logger.warn('Image decode failed, but proceeding:', e);
                             }
                         }
+
+                        const loadedIndex = this.State.thumbnailAnchors.indexOf(anchor);
+
                         placeholder.replaceWith(mediaElement);
                         this.State.largeMediaElements = Array.from(document.querySelectorAll('.gbs-large-view-media'));
+
+                        if (loadedIndex === this.State.currentImageIndex) {
+                            anchor.scrollIntoView({ behavior: 'auto', block: 'center' });
+                        }
+
                         resolve();
                     }, { once: true });
                     mediaElement.addEventListener('error', () => {
@@ -2932,88 +2944,97 @@
                     actionButtonsContainer.className = 'gbs-action-buttons-container';
                     actionButtonsContainer.style.position = 'relative';
 
-                    // Favorite Button
-                    const favoritesLi = Array.from(tagListElement.querySelectorAll('li a')).find(a => a.textContent.includes('Add to favorites') || a.textContent.includes('Unfavorite'))?.closest('li');
-                    if (favoritesLi) {
-                        const favoritesLink = favoritesLi.querySelector('a');
-                        favoritesLink.innerHTML = '<i class="fas fa-star"></i>';
-                        favoritesLink.className = 'gbs-custom-action-btn';
+                    const allLinks = tagListElement.querySelectorAll('li a');
 
-                        favoritesLink.addEventListener('click', function(e) {
-                           this.style.backgroundColor = '#daa520';
-                           setTimeout(() => { this.style.backgroundColor = ''; }, 2000);
-                        });
+                    allLinks.forEach(link => {
+                        const linkText = link.textContent.trim();
 
-                        actionButtonsContainer.appendChild(favoritesLink);
-                        favoritesLi.remove();
-                    }
+                        // Favotie button
+                        if (linkText.includes('Add to favorites') || linkText.includes('Unfavorite')) {
+                            const favoritesLi = link.closest('li');
+                            if (favoritesLi) {
+                                link.innerHTML = '<i class="fas fa-star"></i>';
+                                link.className = 'gbs-custom-action-btn';
 
-                    // Add to Pool Button
-                    const poolLi = Array.from(tagListElement.querySelectorAll('li a')).find(a => a.textContent.includes('Add to Pool'))?.closest('li');
-                    if (poolLi && Settings.State.favoritePools && Settings.State.favoritePools.length > 0) {
-                        const poolButton = document.createElement('div');
-                        poolButton.innerHTML = 'Add to Pool';
-                        poolButton.className = 'gbs-custom-action-btn';
-                        poolButton.dataset.action = 'add-pool';
-
-                        poolButton.addEventListener('click', (e) => {
-                            e.stopPropagation();
-                            if (this.State.currentPoolPopup) {
-                                this.closePoolPopup();
-                                return;
-                            }
-
-                            const popup = document.createElement('div');
-                            popup.className = 'gbs-pool-popup';
-
-                            Settings.State.favoritePools.forEach(pool => {
-                                const poolItem = document.createElement('div');
-                                poolItem.className = 'gbs-pool-popup-item';
-                                poolItem.textContent = pool.name;
-                                poolItem.dataset.poolId = pool.id;
-
-                                poolItem.addEventListener('click', () => {
-                                    const selectedPoolId = pool.id;
-                                    const script = document.createElement('script');
-                                    script.textContent = `(() => {
-                                        const originalPrompt = window.prompt;
-                                        window.prompt = () => '${selectedPoolId}';
-                                        if (typeof addToPoolID === 'function') {
-                                            addToPoolID(${postId});
-                                        }
-                                        window.prompt = originalPrompt;
-                                    })();`;
-                                    document.body.appendChild(script).remove();
-
-                                    poolButton.textContent = `Added!`;
-                                    poolButton.style.backgroundColor = '#daa520';
-                                    setTimeout(() => {
-                                        poolButton.textContent = 'Add to Pool';
-                                         poolButton.style.backgroundColor = '';
-                                    }, 2000);
-                                    this.closePoolPopup();
+                                link.addEventListener('click', function(e) {
+                                   this.style.backgroundColor = '#daa520';
+                                   setTimeout(() => { this.style.backgroundColor = ''; }, 2000);
                                 });
-                                popup.appendChild(poolItem);
-                            });
 
-                            const btnRect = poolButton.getBoundingClientRect();
-                            const sidebarRect = sidebar.getBoundingClientRect();
+                                actionButtonsContainer.appendChild(link);
+                                favoritesLi.remove();
+                            }
+                        }
 
-                            popup.style.position = 'absolute';
-                            popup.style.left = `${(btnRect.left - sidebarRect.left) + (btnRect.width / 2)}px`;
-                            popup.style.top = `${(btnRect.bottom - sidebarRect.top) + sidebar.scrollTop + 4}px`;
-                            popup.style.transform = 'translateX(-51%)';
-                            sidebar.appendChild(popup);
-                            this.State.currentPoolPopup = popup;
+                        // Poll button
+                        else if (linkText.includes('Add to Pool')) {
+                            const poolLi = link.closest('li');
+                            if (poolLi && Settings.State.favoritePools && Settings.State.favoritePools.length > 0) {
+                                const poolButton = document.createElement('div');
+                                poolButton.innerHTML = 'Add to Pool';
+                                poolButton.className = 'gbs-custom-action-btn';
+                                poolButton.dataset.action = 'add-pool';
 
-                            setTimeout(() => {
-                                document.addEventListener('click', this.handleOutsidePopupClick, true);
-                            }, 0);
-                        });
+                                poolButton.addEventListener('click', (e) => {
+                                    e.stopPropagation();
+                                    if (this.State.currentPoolPopup) {
+                                        this.closePoolPopup();
+                                        return;
+                                    }
 
-                        actionButtonsContainer.appendChild(poolButton);
-                        poolLi.remove();
-                    }
+                                    const popup = document.createElement('div');
+                                    popup.className = 'gbs-pool-popup';
+
+                                    Settings.State.favoritePools.forEach(pool => {
+                                        const poolItem = document.createElement('div');
+                                        poolItem.className = 'gbs-pool-popup-item';
+                                        poolItem.textContent = pool.name;
+                                        poolItem.dataset.poolId = pool.id;
+
+                                        poolItem.addEventListener('click', () => {
+                                            const selectedPoolId = pool.id;
+                                            const script = document.createElement('script');
+                                            script.textContent = `(() => {
+                                                const originalPrompt = window.prompt;
+                                                window.prompt = () => '${selectedPoolId}';
+                                                if (typeof addToPoolID === 'function') {
+                                                    addToPoolID(${postId});
+                                                }
+                                                window.prompt = originalPrompt;
+                                            })();`;
+                                            document.body.appendChild(script).remove();
+
+                                            poolButton.textContent = `Added!`;
+                                            poolButton.style.backgroundColor = '#daa520';
+                                            setTimeout(() => {
+                                                poolButton.textContent = 'Add to Pool';
+                                                 poolButton.style.backgroundColor = '';
+                                            }, 2000);
+                                            this.closePoolPopup();
+                                        });
+                                        popup.appendChild(poolItem);
+                                    });
+
+                                    const btnRect = poolButton.getBoundingClientRect();
+                                    const sidebarRect = sidebar.getBoundingClientRect();
+
+                                    popup.style.position = 'absolute';
+                                    popup.style.left = `${(btnRect.left - sidebarRect.left) + (btnRect.width / 2)}px`;
+                                    popup.style.top = `${(btnRect.bottom - sidebarRect.top) + sidebar.scrollTop + 4}px`;
+                                    popup.style.transform = 'translateX(-51%)';
+                                    sidebar.appendChild(popup);
+                                    this.State.currentPoolPopup = popup;
+
+                                    setTimeout(() => {
+                                        document.addEventListener('click', this.handleOutsidePopupClick, true);
+                                    }, 0);
+                                });
+
+                                actionButtonsContainer.appendChild(poolButton);
+                                poolLi.remove();
+                            }
+                        }
+                    });
 
                     if (actionButtonsContainer.hasChildNodes()) {
                         tagListElement.prepend(actionButtonsContainer);
@@ -3069,15 +3090,15 @@
         addGlobalStyles: function() {
             let customCss = '';
             if (window.location.href.includes('page=favorites')) {
-                customCss += `html, body { background-color: #1F1F1F !important; }`;
+                customCss += `html, body { background-color: #1F1F1F !important; }  div#paginator {color: white !important; }`;
             }
             if (Settings.State.HIDE_PAGE_SCROLLBARS) {
-                customCss += `html, body { scrollbar-width: none !important;} html::-webkit-scrollbar, body::-webkit-scrollbar { display: none !important; }`;
+                customCss += `html, body, .aside, #gbs-viewer-info-sidebar { scrollbar-width: none !important;} html::-webkit-scrollbar, body::-webkit-scrollbar, .aside::-webkit-scrollbar, #gbs-viewer-info-sidebar::-webkit-scrollbar { display: none !important; }`;
             }
 
             if (GlobalState.pageType === 'post') {
                 GM_addStyle(`
-                    ul.tag-list li { margin: 2px 4px 2px 2px; width: 210px; }
+                    ul.tag-list li { margin: 0px 4px 0px 0px; width: 200px; }
                     .aside { max-height: 100vh; overflow-y: auto; }
                     main #image, main video#gelcomVideoPlayer { width: 100vw !important; margin: auto !important; object-fit: contain !important; }
                     .gbs-pool-action-container { display: inline-flex; gap: 5px; align-items: center;}
@@ -3090,6 +3111,8 @@
                     .gbs-pool-popup-item { padding: 5px 8px; color: #eee !important; cursor: pointer; text-align: center; }
                     .gbs-pool-popup-item:hover { background-color: #666; border-radius: 10px; }
                 `);
+
+                document.querySelector('.aside')?.scrollTo(0, 0);
             }
 
             if (!document.querySelector('link[href*="font-awesome"]')) {
@@ -3102,7 +3125,7 @@
                 GM_addStyle(customCss);
             }
             GM_addStyle(`
-                .gbs-fab-action-btn {min-width: 168px; justify-content: center; background-color: #343a40; color: white; font-weight: bold; border: none; border-radius: 10px; padding: 10px 15px; cursor: pointer; display: flex; align-items: center; box-shadow: 0 2px 5px rgba(0,0,0,0.2); white-space: nowrap; transition: background-color 0.2s; }
+                .gbs-fab-action-btn {min-width: 155px; justify-content: center; background-color: #343a40; color: white; font-weight: bold; border: none; border-radius: 10px; padding: 10px 15px; cursor: pointer; display: flex; align-items: center; box-shadow: 0 2px 5px rgba(0,0,0,0.2); white-space: nowrap; transition: background-color 0.2s; }
                 .gbs-fab-action-btn:hover { background-color: #007BFF; }
                 .gbs-fab-action-btn:disabled { opacity: 0.6; cursor: not-allowed; background-color: #343a40; }
                 .gbs-fab-action-btn.active { background-color: #A43535; color: white !important; }
@@ -3190,8 +3213,22 @@
                 leftContainer.append('(', prevLink, ' / ', nextLink, ')');
                 if (navContainer) navContainer.remove();
             }
+            let foundEditLink = false;
             originalContentNodes.forEach(node => {
-                rightContainer.appendChild(node);
+            if (foundEditLink) {
+                if (node.nodeType === 3 && node.textContent.includes('|')) {
+                    foundEditLink = false;
+                    return;
+                }
+                foundEditLink = false;
+            }
+
+            if (node.tagName === 'A' && node.textContent.trim() === 'Edit') {
+                foundEditLink = true;
+                return;
+            }
+
+            rightContainer.appendChild(node);
             });
 
             const resizeLinkContainer = document.querySelector('#resize-link');
@@ -3202,11 +3239,6 @@
         initPostPoolUI: function() {
             const favoritePools = Settings.State.favoritePools || [];
             if (favoritePools.length === 0) return;
-
-            const originalAddToPoolLink = document.querySelector('a[onclick*="addToPoolID"]');
-            if (originalAddToPoolLink) {
-                originalAddToPoolLink.closest('li')?.remove();
-            }
 
             const rightContainer = document.querySelector('#scrollebox > span:last-child');
             if (!rightContainer) return;
@@ -3246,54 +3278,66 @@
             const addButton = document.getElementById('gbs-post-pool-add-btn');
             const removeButton = document.getElementById('gbs-post-pool-remove-btn');
 
-            if (!postId || !relationshipsLink || !addButton || !badge || !removeButton) return;
+            if (!postId || !addButton || !badge || !removeButton) {
+                Logger.warn('[App.refreshPostPoolUI] Essential components of the IU not found.');
+                return;
+            }
 
             addButton.disabled = true;
             removeButton.disabled = true;
             badge.style.display = 'none';
+            removeButton.style.display = 'inline-block';
 
-            try {
-                const { promise } = Utils.makeRequest({ method: "GET", url: relationshipsLink.href });
-                const response = await promise;
-                const doc = new DOMParser().parseFromString(response.responseText, "text/html");
-                const currentPools = Array.from(doc.querySelectorAll('tbody tr a[href*="page=pool&s=show"]'))
-                    .map(link => ({
-                        id: new URL(link.href, window.location.origin).searchParams.get('id'),
-                        name: link.textContent.trim()
-                    }))
-                    .filter(p => p.id);
+            let currentPools = [];
+            let matchingPools = [];
+            let poolsToAdd = [];
+            const favoritePoolMap = new Map(favoritePools.map(p => [p.id, p]));
 
-                const currentPoolIds = new Set(currentPools.map(p => p.id));
-                const favoritePoolMap = new Map(favoritePools.map(p => [p.id, p]));
+            if (relationshipsLink) {
+                try {
+                    const { promise } = Utils.makeRequest({ method: "GET", url: relationshipsLink.href });
+                    const response = await promise;
+                    const doc = new DOMParser().parseFromString(response.responseText, "text/html");
+                    currentPools = Array.from(doc.querySelectorAll('tbody tr a[href*="page=pool&s=show"]'))
+                        .map(link => ({
+                            id: new URL(link.href, window.location.origin).searchParams.get('id'),
+                            name: link.textContent.trim()
+                        }))
+                        .filter(p => p.id);
 
-                const matchingPools = currentPools.filter(p => favoritePoolMap.has(p.id));
-                const poolsToAdd = favoritePools.filter(p => !currentPoolIds.has(p.id));
-
-                if (matchingPools.length > 0) {
-                    badge.textContent = matchingPools.length;
+                } catch (error) {
+                    Logger.error('Could not fetch pool relationships:', error);
+                    badge.textContent = 'E';
                     badge.style.display = 'inline-flex';
+                    return;
                 }
+            }
 
-                addButton.disabled = poolsToAdd.length === 0;
-                addButton.textContent = 'Add to Pool';
-                const newAddButton = addButton.cloneNode(true);
-                addButton.parentNode.replaceChild(newAddButton, addButton);
-                if (poolsToAdd.length > 0) {
-                    newAddButton.addEventListener('click', (e) => this.showPoolPopup(e, 'add', poolsToAdd));
-                }
+            const currentPoolIds = new Set(currentPools.map(p => p.id));
+            matchingPools = currentPools.filter(p => favoritePoolMap.has(p.id));
+            poolsToAdd = favoritePools.filter(p => !currentPoolIds.has(p.id));
 
-                removeButton.disabled = matchingPools.length === 0;
-                removeButton.textContent = 'Remove from Pool';
-                const newRemoveButton = removeButton.cloneNode(true);
-                removeButton.parentNode.replaceChild(newRemoveButton, removeButton);
-                if (matchingPools.length > 0) {
-                    newRemoveButton.addEventListener('click', (e) => this.showPoolPopup(e, 'remove', matchingPools));
-                }
-
-            } catch (error) {
-                Logger.error('Could not fetch pool relationships:', error);
-                badge.textContent = 'E';
+            if (matchingPools.length > 0) {
+                badge.textContent = matchingPools.length;
                 badge.style.display = 'inline-flex';
+            }
+
+            addButton.disabled = poolsToAdd.length === 0;
+            addButton.textContent = 'Add to Pool';
+            const newAddButton = addButton.cloneNode(true);
+            addButton.parentNode.replaceChild(newAddButton, addButton);
+            if (poolsToAdd.length > 0) {
+                newAddButton.addEventListener('click', (e) => this.showPoolPopup(e, 'add', poolsToAdd));
+            }
+
+            removeButton.textContent = 'Remove from Pool';
+            const newRemoveButton = removeButton.cloneNode(true);
+            newRemoveButton.disabled = matchingPools.length === 0;
+            newRemoveButton.style.display = matchingPools.length === 0 ? 'none' : 'inline-block';
+            removeButton.parentNode.replaceChild(newRemoveButton, removeButton);
+
+            if (matchingPools.length > 0) {
+                newRemoveButton.addEventListener('click', (e) => this.showPoolPopup(e, 'remove', matchingPools));
             }
         },
         showPoolPopup: function(event, type, poolList) {
@@ -3374,14 +3418,16 @@
             const scrollbox = document.querySelector('#scrollebox');
 
             if (scrollbox) {
-                setTimeout(() => {
-                    scrollbox.style.scrollMarginBottom = '8px';
+                requestAnimationFrame(() => {
+                    requestAnimationFrame(() => {
+                        scrollbox.style.scrollMarginBottom = '8px';
 
-                    scrollbox.scrollIntoView({
-                        behavior: 'smooth',
-                        block: 'end'
+                        scrollbox.scrollIntoView({
+                            behavior: 'smooth',
+                            block: 'end'
+                        });
                     });
-                }, 100);
+                });
             }
         },
         setupScrollTrigger: function() {
@@ -3409,15 +3455,23 @@
             }
         },
         reorderPostSections: function() {
-            const fitImageLink = Array.from(document.querySelectorAll('#tag-list a'))
-                                      .find(a => a.textContent.trim() === 'Fit Image to Window');
+            const textsToRemove = new Set([
+                'Fit Image to Window',
+                'Add to favorites',
+                'Original image',
+                'Lock Image',
+                'Tag Merge',
+            ]);
 
-            if (fitImageLink) {
-                const listItem = fitImageLink.closest('li');
-                if (listItem) {
-                    listItem.remove();
+            const allLinks = document.querySelectorAll('#tag-list a');
+
+            allLinks.forEach(link => {
+                const linkText = link.textContent.trim();
+                if (textsToRemove.has(linkText)) {
+                    link.closest('li')?.remove();
                 }
-            }
+            });
+
             const tagList = document.querySelector('#tag-list');
             if (!tagList) { return;
             }
