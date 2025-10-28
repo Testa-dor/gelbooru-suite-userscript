@@ -2,31 +2,15 @@
 <hr>
 <h2 style="background-color:#670000; border:outset;">&nbsp;Key Features</h2>
 <details>
-<summary>Instant Hover Previews 🔍</summary><br><p>Get a better look without the extra clicks. Just hover over any thumbnail to see a larger, high-quality preview on the fly.</p>
-<ul>
-<li><strong style="color: #e95757;">Image &amp; Video Support:</strong> Works seamlessly for both static images and videos.</li>
-<li><strong style="color: #e95757;">Full Video Controls:</strong> Preview videos come with a seek bar and keyboard shortcuts (<code>Space</code> to play/pause, <code>Arrow Keys</code> to seek) for quick control.</li>
-  <br>
-<p align="center">
-  <a href="https://files.catbox.moe/xu36a8.mp4">
-    <img src="https://img.shields.io/badge/Click to see video preview-697da0?" width=300>
-</a>
-</p>
-</ul>
-<hr>
-</details>
-<details>
 <summary>Advanced Tag Editor 🏷️</summary><br><p>Ditch the plain text box. The Tag Editor gives you a powerful, visual way to build the perfect search query.</p>
 <ul>
 <li><strong style="color: #e95757;">Visual Tag Pills:</strong> Tags are shown as colorful pills, neatly grouped by category (artist, character, copyright, etc.).</li>
 <li><strong style="color: #e95757;">Powerful Modifiers:</strong> Easily add filters for rating, score, and sorting order without having to memorize the syntax.</li>
 <li><strong style="color: #e95757;">Quick Searches &amp; Blacklist:</strong> Instantly load your saved searches or apply your personal blacklist with a single click.</li>
   <br>
-<p align="center">
-  <a href="https://files.catbox.moe/erblbm.mp4">
-    <img src="https://img.shields.io/badge/Click to see video preview-697da0?" width=300>
-</a>
-</p>
+  
+https://github.com/user-attachments/assets/e92dd1c9-44fa-4a51-93e4-7c37f10882b7
+
 </ul>
 <hr>
 </details>
@@ -36,11 +20,11 @@
 <li><strong style="color: #e95757;">Focused Viewing:</strong> Hides the page clutter, letting you focus on one post at a time in a clean, edge-to-edge layout.</li>
 <li><strong style="color: #e95757;">On-Demand Info Panel:</strong> Press <code>i</code> to slide out a sidebar with all the post's tags, stats, and actions, neatly organized.</li>
   <br>
-<p align="center">
-  <a href="https://files.catbox.moe/c4zygh.mp4">
-    <img src="https://img.shields.io/badge/Click to see video preview-697da0?" width=300>
-</a>
-</p>
+
+
+https://github.com/user-attachments/assets/51227b05-7889-484a-8a8b-20a197dd04b1
+
+
 </ul>
 <hr>
 </details>
@@ -51,11 +35,11 @@
 <li><strong style="color: #e95757;">Consolidated Action Bar:</strong> All essential actions <code>Edit, Leave a Comment, Favorites, Add to Pool, and Post Navigation (Previous/Next)</code> are moved into a single, clean bar right below the media.</li>
 <li><strong style="color: #e95757;">Clutter-Free:</strong> Unnecessary elements and ads are moved out of the way, leaving you to focus on the content.</li>
     <br>
-<p align="center">
-  <a href="https://files.catbox.moe/eufqwp.mp4">
-    <img src="https://img.shields.io/badge/Click to see video preview-697da0?" width=300>
-</a>
-</p>
+
+
+https://github.com/user-attachments/assets/a785c3b0-1ff1-49f6-8574-a46ccc415801
+
+
 </ul>
 <hr>
 </details>
@@ -65,11 +49,11 @@
 <li><strong style="color: #e95757;">Batch Downloader:</strong> Download everything from the current page or activate selection mode to hand-pick specific posts.</li>
 <li><strong style="color: #e95757;">Add to Pool:</strong> Quickly add or remove posts from your favorite pools. Configure up to 5 pools, select your target, choose an action (Add/Remove), and just click any thumbnail to manage it.</li>
   <br>
-<p align="center">
-  <a href="https://files.catbox.moe/vff21o.mp4">
-    <img src="https://img.shields.io/badge/Click to see video preview-697da0?" width=300>
-</a>
-</p>
+
+
+https://github.com/user-attachments/assets/8e7b55e4-5a81-4c09-a5eb-0b6c1a46a40b
+
+
 </ul>
 <hr>
 </details>
