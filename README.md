@@ -1,4 +1,5 @@
 <p><strong>Gelbooru Suite</strong> is a userscript that supercharges your Gelbooru experience with a set of smart, modern tools. It's all about making browsing, searching, and viewing media faster, cleaner, and way more enjoyable.</p>
+<p><strong>Design Note:</strong> This script is meant to be used together with the <a href="https://addons.mozilla.org/firefox/addon/imagus/" target="_blank" rel="noopener noreferrer">Imagus</a> extension (or a similar one). Because of that, it intentionally doesn’t include its own hover preview feature, focusing instead on other tools to complement that experience.</p>
 <hr>
 <h2 style="background-color:#670000; border:outset;">&nbsp;Key Features</h2>
 <details>
@@ -47,7 +48,7 @@ https://github.com/user-attachments/assets/a785c3b0-1ff1-49f6-8574-a46ccc415801
 <summary>Side-Menu Tools 🛠️</summary><br><p>Access powerful tools from a discreet side-menu on any gallery page.</p>
 <ul>
 <li><strong style="color: #e95757;">Batch Downloader:</strong> Download everything from the current page or activate selection mode to hand-pick specific posts.</li>
-<li><strong style="color: #e95757;">Add to Pool:</strong> Quickly add or remove posts from your favorite pools. Configure up to 5 pools, select your target, choose an action (Add/Remove), and just click any thumbnail to manage it.</li>
+<li><strong style="color: #e95757;">Add to Pool/Favorites:</strong> Quickly add or remove posts from your pools (set up to 5 pools) or from your favorites. Just select the action and click any thumbnail to manage it.</li>
   <br>
 
 
