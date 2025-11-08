@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name        Gelbooru Suite
 // @namespace   GelbooruEnhancer
-// @version     2.2.0
-// @description Enhances Gelbooru with thumbnail previews, a categorized pop-up search, an immersive viewer, pool markers, and more.
+// @version     2.2.8
+// @description Enhances Gelbooru with a categorized pop-up search, an immersive viewer, pool markers, and more.
 // @author      Testador (Refactored by Gemini)
 // @match       *://gelbooru.com/*
 // @icon        https://gelbooru.com/layout/gelbooru-logo.svg
@@ -51,6 +51,10 @@
             KEY_VIEWER_PREV_IMAGE: 'ArrowUp',
             KEY_VIEWER_NEXT_IMAGE: 'ArrowDown',
             KEY_VIEWER_TOGGLE_INFO: 'i',
+            KEY_VIEWER_CLOSE: 'Escape',
+            KEY_VIEWER_PIN_UI: 'p',
+            KEY_VIEWER_OPEN_POST: 'o',
+            KEY_VIDEO_FULLSCREEN: 'f',
 
             // --- API ---
             API_KEY: '',
@@ -59,7 +63,7 @@
         SELECTORS: {
             SEARCH_INPUT: '#tags-search',
             THUMBNAIL_GRID_SELECTOR: '.thumbnail-container, #post-list > div, .mainBodyPadding',
-            THUMBNAIL_ANCHOR_SELECTOR: '.thumbnail-preview > a',
+            THUMBNAIL_ANCHOR_SELECTOR: '.thumbnail-container > span > a, .thumbnail-container > .thumbnail-preview > a',
             VIDEO_PLAYER_SELECTOR: 'main video#gelcomVideoPlayer',
             IMAGE_SELECTOR: 'main #image',
             PAGINATION_CURRENT_SELECTOR: '.pagination b',
@@ -364,6 +368,10 @@
                 KEY_VIEWER_PREV_IMAGE: getHotkey('setting-key-viewer-prev') || Config.DEFAULT_SETTINGS.KEY_VIEWER_PREV_IMAGE,
                 KEY_VIEWER_NEXT_IMAGE: getHotkey('setting-key-viewer-next') || Config.DEFAULT_SETTINGS.KEY_VIEWER_NEXT_IMAGE,
                 KEY_VIEWER_TOGGLE_INFO: getHotkey('setting-key-viewer-info') || Config.DEFAULT_SETTINGS.KEY_VIEWER_TOGGLE_INFO,
+                KEY_VIEWER_CLOSE: getHotkey('setting-key-viewer-close') || Config.DEFAULT_SETTINGS.KEY_VIEWER_CLOSE,
+                KEY_VIEWER_PIN_UI: getHotkey('setting-key-viewer-pin') || Config.DEFAULT_SETTINGS.KEY_VIEWER_PIN_UI,
+                KEY_VIEWER_OPEN_POST: getHotkey('setting-key-viewer-open-post') || Config.DEFAULT_SETTINGS.KEY_VIEWER_OPEN_POST,
+                KEY_VIDEO_FULLSCREEN: getHotkey('setting-key-viewer-video-fullscreen') || Config.DEFAULT_SETTINGS.KEY_VIDEO_FULLSCREEN,
             });
 
             Object.assign(newSettings, {
@@ -541,7 +549,12 @@
                     <div class="setting-item"><label for="setting-key-viewer-prev">Prev Image</label><input type="text" id="setting-key-viewer-prev" class="hotkey-input" readonly></div>
                     <div class="setting-item"><label for="setting-key-viewer-next">Next Image</label><input type="text" id="setting-key-viewer-next" class="hotkey-input" readonly></div>
                     <div class="setting-item"><label for="setting-key-viewer-info">Toggle Info</label><input type="text" id="setting-key-viewer-info" class="hotkey-input" readonly></div>
-                </div>`;
+
+                    <div class="setting-item"><label for="setting-key-viewer-close">Close Viewer</label><input type="text" id="setting-key-viewer-close" class="hotkey-input" readonly></div>
+                    <div class="setting-item"><label for="setting-key-viewer-pin">Pin UI</label><input type="text" id="setting-key-viewer-pin" class="hotkey-input" readonly></div>
+                    <div class="setting-item"><label for="setting-key-viewer-open-post">Open Post Tab</label><input type="text" id="setting-key-viewer-open-post" class="hotkey-input" readonly></div>
+                    <div class="setting-item"><label for="setting-key-viewer-video-fullscreen">Video Fullscreen</label><input type="text" id="setting-key-viewer-video-fullscreen" class="hotkey-input" readonly></div>
+                    </div>`;
             },
             _getAdvancedSettingsHTML: function() {
                 return `
@@ -704,6 +717,10 @@
                 document.getElementById('setting-key-viewer-prev').value = Utils.formatHotkeyForDisplay(Settings.State.KEY_VIEWER_PREV_IMAGE);
                 document.getElementById('setting-key-viewer-next').value = Utils.formatHotkeyForDisplay(Settings.State.KEY_VIEWER_NEXT_IMAGE);
                 document.getElementById('setting-key-viewer-info').value = Utils.formatHotkeyForDisplay(Settings.State.KEY_VIEWER_TOGGLE_INFO);
+                document.getElementById('setting-key-viewer-close').value = Utils.formatHotkeyForDisplay(Settings.State.KEY_VIEWER_CLOSE);
+                document.getElementById('setting-key-viewer-pin').value = Utils.formatHotkeyForDisplay(Settings.State.KEY_VIEWER_PIN_UI);
+                document.getElementById('setting-key-viewer-open-post').value = Utils.formatHotkeyForDisplay(Settings.State.KEY_VIEWER_OPEN_POST);
+                document.getElementById('setting-key-viewer-video-fullscreen').value = Utils.formatHotkeyForDisplay(Settings.State.KEY_VIDEO_FULLSCREEN);
 
                 document.getElementById('setting-api-key').value = Settings.State.API_KEY;
                 document.getElementById('setting-user-id').value = Settings.State.USER_ID;
@@ -1303,6 +1320,8 @@
                 .gbs-pool-marker-container { position: absolute; display: flex; gap: 4px; pointer-events: auto; margin-top: 3px; left: 50%; transform: translateX(-50%); body.gbs-viewer-mode-active & { display: none !important; } }
                 .gbs-pool-marker { width: 18px; height: 5px; border-radius: 10px; box-shadow: 2px 2px 6px rgb(0,0,0); }
                 .gbs-favorite-marker { position: absolute; top: 3px; right: 3px; font-size: 14px; color: #daa520; pointer-events: none; padding: 4px 5px; box-shadow: 0 0 4px rgba(0,0,0,0.8); border-radius: 10px; background-color: rgba(37, 37, 37, 0.9); border: 2px solid rgba(37, 37, 37, 0.2); body.gbs-viewer-mode-active & { display: none !important; } }
+                body.gbs-page-pool-show .gbs-pool-marker-container { margin-top: -6px; }
+                body.gbs-page-pool-show .gbs-favorite-marker { right: 13px; top: 13px; }
             `);
         },
         async loadCache() {
@@ -1744,6 +1763,11 @@
             }
         },
         handleThumbnailClick: function(event) {
+            const deleteModeCheckbox = document.getElementById('del-mode');
+            if (deleteModeCheckbox && deleteModeCheckbox.checked) {
+                return;
+            }
+
             if (MediaViewer.State.isLargeViewActive) return;
             if (!this.State.isSelectionModeActive) return;
 
@@ -2020,6 +2044,11 @@
             }
         },
         async handleThumbnailClick(event) {
+            const deleteModeCheckbox = document.getElementById('del-mode');
+            if (deleteModeCheckbox && deleteModeCheckbox.checked) {
+                return;
+            }
+
             if (MediaViewer.State.isLargeViewActive) return;
 
             const self = AddToPool;
@@ -2144,9 +2173,9 @@
                                 }
                             }
                         } else {
-                             Logger.warn(`[AddToPool] Could not find the 'Add to favorites' link to the post ${postId}.`);
-                             notificationClass = 'gbs-pool-remove-notification';
-                             notificationText = 'Error?';
+                            Logger.warn(`[AddToPool] Could not find the 'Add to favorites' link to the post ${postId}.`);
+                            notificationClass = 'gbs-pool-remove-notification';
+                            notificationText = 'Error?';
                         }
                     }
                 }
@@ -2195,11 +2224,16 @@
             largeMediaElements: [],
             thumbnailAnchors: [],
             inactivityTimer: null,
-            _boundResetInactivityTimer: null,
+            _boundResetMouseInactivityTimer: null,
+            _boundHandleViewerMouseMove: null,
             _lazyLoadObserver: null,
             currentPoolPopup: null,
             originalScrollY: 0,
             postDataCache: new Map(),
+            isUiPinned: false,
+            lastMousePos: { x: 0, y: 0 },
+            resizeTimer: null,
+            _boundResizeHandler: null,
         },
         init() {
             const isPoolPage = window.location.search.includes('page=pool');
@@ -2220,13 +2254,14 @@
             .gbs-large-view-active.thumbnail-container { display: block !important; }
             .gbs-large-view-active.thumbnail-container > .thumbnail-preview { width: 100vw !important; max-width: none !important; height: 100vh !important; display: flex !important; justify-content: center !important; align-items: center !important; padding: 0 !important; margin: 0 !important; }
             .gbs-large-view-active.thumbnail-container > span { height: 100vh; display: flex; justify-content: center; align-items: center; }
-            .gbs-large-view-active.thumbnail-container a { pointer-events: none; }
-            .gbs-large-view-media { max-width: 93vw !important; max-height: 98vh !important; object-fit: contain; pointer-events: auto; border-radius: 0px !important; }
+            .gbs-large-view-active.thumbnail-container a { pointer-events: none !important; }
+            .gbs-large-view-media { max-width: 100vw !important; max-height: 100vh !important; object-fit: contain; pointer-events: auto !important; border-radius: 0px !important; }
+            video.gbs-large-view-media { max-height: 85vh !important; }
 
             .gbs-viewer-nav-item { color: #fff; background-color: rgba(37, 37, 37, 0.8); padding: 5px; border-radius: 10px; border: 2px solid rgba(51, 51, 51, 0.5); width: 45px; height: 40px; display: flex; align-items: center; justify-content: center; box-sizing: border-box !important; transition: background-color 0.2s, border-color 0.2s ease; }
             .gbs-viewer-nav-btn { font-size: 24px; cursor: pointer; }
             .gbs-viewer-nav-btn:hover { background-color: #333; border-color: #333; }
-            #gbs-viewer-nav-counter { font-size: 14px; font-weight: bold; user-select: none; height: 30px;}
+            #gbs-viewer-nav-counter { font-size: 11px; font-weight: bold; user-select: none; height: 30px;}
             #gbs-viewer-nav-container { position: fixed; top: 80%; right: 4px; z-index: 99999; display: none; flex-direction: column; gap: 5px; }
             #gbs-viewer-nav-container.visible { display: flex; }
 
@@ -2239,6 +2274,9 @@
             #gbs-viewer-show-info-btn.active { color: #006FFA !important; border-color: #006FFA; }
             #gbs-viewer-show-info-btn.active:hover { color: white !important; }
             #gbs-viewer-top-controls, #gbs-viewer-nav-container { transition: opacity 0.3s ease-in-out; }
+            #gbs-viewer-pin-btn {background: none !important; border: none !important; color: #fff !important; opacity: 0.6; font-size: 12px; cursor: pointer; width: 45px; height: 25px; margin-top: -205px; align-items: center; justify-content: center; display: none; transition: opacity 0.2s ease, transform 0.2s ease; }
+            #gbs-viewer-pin-btn:hover { opacity: 1; }
+            #gbs-viewer-pin-btn.active { opacity: 1; transform:  rotate(45deg);}
 
             #gbs-viewer-info-sidebar { position: fixed !important; top: 0; left: -280px; width: 250px; height: 100vh; background-color: #1f1f1f; border-right: 1px solid #333; z-index: 99999; box-sizing: border-box; transition: left 0.3s ease-in-out; display: flex; flex-direction: column; }
             .gbs-viewer-tags-scroll-wrapper { flex-grow: 1; overflow-y: auto; padding: 10px 5px 5px 5px; min-height: 0; }
@@ -2282,7 +2320,11 @@
             openPostBtn.id = 'gbs-viewer-open-post-btn';
             openPostBtn.title = 'Open Post in New Tab';
             openPostBtn.innerHTML = '<i class="fas fa-external-link-alt"></i>';
-            topControlsContainer.append(viewerButton, showInfoBtn, openPostBtn);
+            const pinBtn = document.createElement('button');
+            pinBtn.id = 'gbs-viewer-pin-btn';
+            pinBtn.title = 'Pin UI Controls';
+            pinBtn.innerHTML = '<i class="fas fa-thumbtack"></i>';
+            topControlsContainer.append(viewerButton, showInfoBtn, openPostBtn, pinBtn);
             document.body.appendChild(topControlsContainer);
 
             const navContainer = document.createElement('div');
@@ -2307,6 +2349,7 @@
                 navDownButton: navContainer.querySelector('#gbs-viewer-nav-down'),
                 showInfoButton: showInfoBtn,
                 openPostButton: openPostBtn,
+                pinButton: pinBtn,
                 infoSidebar,
             };
         },
@@ -2373,7 +2416,7 @@
             if (this.elements.infoSidebar.classList.contains('visible')) {
                 this.fetchAndDisplayInfo();
             } else {
-                 this.elements.infoSidebar.dataset.currentPostId = '';
+                this.elements.infoSidebar.dataset.currentPostId = '';
             }
 
             this.updateNavCounter();
@@ -2381,6 +2424,11 @@
             setTimeout(() => { this._isNavigating = false; }, 50);
         },
         async handleThumbnailClick(event) {
+            const deleteModeCheckbox = document.getElementById('del-mode');
+            if (deleteModeCheckbox && deleteModeCheckbox.checked) {
+                return;
+            }
+
             if (Downloader.State.isSelectionModeActive || (typeof AddToPool !== 'undefined' && AddToPool.State.selectionMode)) {
                 return;
             }
@@ -2407,14 +2455,23 @@
             }
         },
         setupEventListeners() {
+            this.elements.viewerButton.title = `[${Utils.formatHotkeyForDisplay(Settings.State.KEY_VIEWER_CLOSE)}] Close Media Viewer`;
             this.elements.viewerButton.addEventListener('click', (e) => {
                 e.preventDefault();
                 e.stopPropagation();
                 this.deactivateLargeView();
             });
+
+            this.elements.navUpButton.title = `[${Utils.formatHotkeyForDisplay(Settings.State.KEY_VIEWER_PREV_IMAGE)}] or (Scroll Up) Previous Image`;
             this.elements.navUpButton.addEventListener('click', () => this.navigateToImage(-1));
+
+            this.elements.navDownButton.title = `[${Utils.formatHotkeyForDisplay(Settings.State.KEY_VIEWER_NEXT_IMAGE)}] or (Scroll Down) Next Image`;
             this.elements.navDownButton.addEventListener('click', () => this.navigateToImage(1));
+
+            this.elements.showInfoButton.title = `[${Utils.formatHotkeyForDisplay(Settings.State.KEY_VIEWER_TOGGLE_INFO)}] Show Post Info`;
             this.elements.showInfoButton.addEventListener('click', () => this.toggleInfoSidebar());
+
+            this.elements.openPostButton.title = `[${Utils.formatHotkeyForDisplay(Settings.State.KEY_VIEWER_OPEN_POST)}] Open Post in New Tab`;
             this.elements.openPostButton.addEventListener('click', () => {
                 if (this.State.currentImageIndex >= 0 && this.State.currentImageIndex < this.State.thumbnailAnchors.length) {
                     const anchor = this.State.thumbnailAnchors[this.State.currentImageIndex];
@@ -2423,6 +2480,9 @@
                     }
                 }
             });
+
+            this.elements.pinButton.title = `[${Utils.formatHotkeyForDisplay(Settings.State.KEY_VIEWER_PIN_UI)}] Pin UI Controls`;
+            this.elements.pinButton.addEventListener('click', () => this.toggleUiPin());
         },
         async activateLargeView(startIndex = 0) {
             this.State.originalScrollY = window.scrollY;
@@ -2430,6 +2490,9 @@
             this.State.isLargeViewActive = true;
             this.elements.viewerButton.style.display = 'flex';
             this.elements.viewerButton.classList.add('active');
+
+            this._boundWheelHandler = this.handleNavWheel.bind(this);
+            document.addEventListener('wheel', this._boundWheelHandler, { passive: false });
 
             const loadingOverlay = document.createElement('div');
             loadingOverlay.id = 'gbs-loading-overlay';
@@ -2500,7 +2563,13 @@
                 document.addEventListener('keydown', this._boundKeyDownHandler);
                 this.State.currentImageIndex = -1;
                 this.elements.navContainer.classList.add('visible');
+                this.elements.topControlsContainer?.classList.add('gbs-ui-hidden');
+                this.elements.navContainer?.classList.add('gbs-ui-hidden');
                 this.setupInactivityListeners();
+                if (!this.State._boundResizeHandler) {
+                    this.State._boundResizeHandler = this.handleResize.bind(this);
+                }
+                window.addEventListener('resize', this.State._boundResizeHandler);
 
                 this.jumpToIndex(startIndex);
 
@@ -2513,13 +2582,20 @@
         },
         deactivateLargeView() {
             this.State.isLargeViewActive = false;
+            this.State.isUiPinned = false;
+            this.elements.pinButton.classList.remove('active');
             this.elements.viewerButton.style.display = 'none';
             this.elements.viewerButton.classList.remove('active');
 
             document.getElementById('gbs-loading-overlay')?.remove();
+            document.removeEventListener('wheel', this._boundWheelHandler);
 
             document.body.classList.remove('gbs-viewer-mode-active');
             this.cleanupInactivityListeners();
+            if (this.State._boundResizeHandler) {
+                window.removeEventListener('resize', this.State._boundResizeHandler);
+            }
+            clearTimeout(this.State.resizeTimer);
             if (typeof Downloader !== 'undefined') Downloader.toggleVisibility(true);
             if (typeof AddToPool !== 'undefined') AddToPool.toggleVisibility(true);
 
@@ -2532,6 +2608,7 @@
 
             this.elements.showInfoButton.style.display = 'none';
             this.elements.openPostButton.style.display = 'none';
+            this.elements.pinButton.style.display = 'none';
             this.elements.infoSidebar.classList.remove('visible');
             this.elements.showInfoButton.classList.remove('active');
             document.body.style.overflow = '';
@@ -2551,33 +2628,99 @@
             this.State.largeMediaElements = [];
             this.closePoolPopup();
         },
-        resetInactivityTimer() {
-            if (!this.State.isLargeViewActive) return;
-            this.elements.topControlsContainer?.classList.remove('gbs-ui-hidden');
-            this.elements.navContainer?.classList.remove('gbs-ui-hidden');
-            document.body.classList.remove('gbs-hide-viewer-cursor');
-            clearTimeout(this.State.inactivityTimer);
-            this.State.inactivityTimer = setTimeout(() => {
-                const isHoveringControls = this.elements.topControlsContainer?.matches(':hover') || this.elements.navContainer?.matches(':hover');
-                if (!isHoveringControls) {
-                    this.elements.topControlsContainer?.classList.add('gbs-ui-hidden');
-                    this.elements.navContainer?.classList.add('gbs-ui-hidden');
-                    document.body.classList.add('gbs-hide-viewer-cursor');
+        handleResize: function() {
+            if (!this.State.isLargeViewActive || this.State.currentImageIndex === -1) {
+                return;
+            }
+
+            clearTimeout(this.State.resizeTimer);
+
+            this.State.resizeTimer = setTimeout(() => {
+                const targetAnchor = this.State.thumbnailAnchors[this.State.currentImageIndex];
+
+                if (targetAnchor) {
+                    targetAnchor.scrollIntoView({ behavior: 'auto', block: 'center' });
+                    Logger.log('Resize complete. Re-centering image.');
                 }
+            }, 100);
+        },
+        resetMouseInactivityTimer: function() {
+            if (!this.State.isLargeViewActive) return;
+
+            document.body.classList.remove('gbs-hide-viewer-cursor');
+
+            clearTimeout(this.State.inactivityTimer);
+
+            this.State.inactivityTimer = setTimeout(() => {
+                document.body.classList.add('gbs-hide-viewer-cursor');
             }, 3000);
         },
+        handleViewerMouseMove: function(event) {
+            if (!this.State.isLargeViewActive) return;
+
+            this.State.lastMousePos = { x: event.clientX, y: event.clientY };
+
+            const isHoveringControls = event.target.closest('#gbs-viewer-top-controls, #gbs-viewer-nav-container');
+            if (isHoveringControls) {
+                this.elements.topControlsContainer?.classList.remove('gbs-ui-hidden');
+                this.elements.navContainer?.classList.remove('gbs-ui-hidden');
+                return;
+            }
+
+            this.updateUiVisibility();
+        },
+        toggleUiPin: function() {
+            this.State.isUiPinned = !this.State.isUiPinned;
+
+            this.elements.pinButton.classList.toggle('active', this.State.isUiPinned);
+
+            this.updateUiVisibility();
+        },
+        updateUiVisibility: function() {
+            if (this.State.isUiPinned) {
+                this.elements.topControlsContainer?.classList.remove('gbs-ui-hidden');
+                this.elements.navContainer?.classList.remove('gbs-ui-hidden');
+                return;
+            }
+
+            const { x, y } = this.State.lastMousePos;
+
+            const rightHotzonePx = 100;
+            const windowWidth = window.innerWidth;
+            const windowHeight = window.innerHeight;
+
+            const inRightHotzone = (x > (windowWidth - rightHotzonePx)) && (y > (windowHeight / 3));
+
+            if (inRightHotzone) {
+                this.elements.topControlsContainer?.classList.remove('gbs-ui-hidden');
+                this.elements.navContainer?.classList.remove('gbs-ui-hidden');
+            } else {
+                this.elements.topControlsContainer?.classList.add('gbs-ui-hidden');
+                this.elements.navContainer?.classList.add('gbs-ui-hidden');
+            }
+        },
         setupInactivityListeners() {
-            this.State._boundResetInactivityTimer = this.resetInactivityTimer.bind(this);
-            document.addEventListener('mousemove', this.State._boundResetInactivityTimer);
-            this.resetInactivityTimer();
+            this.State._boundResetMouseInactivityTimer = this.resetMouseInactivityTimer.bind(this);
+            this.State._boundHandleViewerMouseMove = this.handleViewerMouseMove.bind(this);
+
+            document.addEventListener('mousemove', this.State._boundResetMouseInactivityTimer);
+            document.addEventListener('mousemove', this.State._boundHandleViewerMouseMove);
+
+            this.resetMouseInactivityTimer();
         },
         cleanupInactivityListeners() {
-            if (this.State._boundResetInactivityTimer) {
-                document.removeEventListener('mousemove', this.State._boundResetInactivityTimer);
-                this.State._boundResetInactivityTimer = null;
+            if (this.State._boundResetMouseInactivityTimer) {
+                document.removeEventListener('mousemove', this.State._boundResetMouseInactivityTimer);
+                this.State._boundResetMouseInactivityTimer = null;
             }
+            if (this.State._boundHandleViewerMouseMove) {
+                document.removeEventListener('mousemove', this.State._boundHandleViewerMouseMove);
+                this.State._boundHandleViewerMouseMove = null;
+            }
+
             clearTimeout(this.State.inactivityTimer);
             this.State.inactivityTimer = null;
+
             this.elements.topControlsContainer?.classList.remove('gbs-ui-hidden');
             this.elements.navContainer?.classList.remove('gbs-ui-hidden');
             document.body.classList.remove('gbs-hide-viewer-cursor');
@@ -2675,11 +2818,43 @@
                 if (this.elements.infoSidebar.classList.contains('visible')) {
                     this.fetchAndDisplayInfo();
                 } else {
-                     this.elements.infoSidebar.dataset.currentPostId = '';
+                    this.elements.infoSidebar.dataset.currentPostId = '';
                 }
             }
             this.updateNavCounter();
             setTimeout(() => { this._isNavigating = false; }, 50);
+        },
+        handleNavWheel(event) {
+            if (this._isNavigating) return;
+
+            if (this.elements.infoSidebar && this.elements.infoSidebar.contains(event.target)) {
+                return;
+            }
+
+            const currentVideo = this.State.thumbnailAnchors[this.State.currentImageIndex]?.querySelector('video.gbs-large-view-media');
+
+            if (currentVideo && event.target === currentVideo) {
+                event.preventDefault();
+
+                const direction = event.deltaY > 0 ? -1 : 1;
+
+                let newVolume = currentVideo.volume + (direction * 0.05);
+
+                newVolume = Math.max(0, Math.min(1, newVolume));
+                currentVideo.volume = newVolume;
+
+                return;
+            }
+            event.preventDefault();
+
+            if (this.State.wheelTimeout) return;
+            this.State.wheelTimeout = setTimeout(() => { this.State.wheelTimeout = null; }, 100);
+
+            if (event.deltaY > 0) {
+                this.navigateToImage(1);
+            } else if (event.deltaY < 0) {
+                this.navigateToImage(-1);
+            }
         },
         handleNavKeyDown(event) {
             if (document.activeElement.tagName === 'INPUT' || document.activeElement.tagName === 'TEXTAREA') return;
@@ -2687,7 +2862,11 @@
             const viewerHotkeys = [
                 Settings.State.KEY_VIEWER_PREV_IMAGE,
                 Settings.State.KEY_VIEWER_NEXT_IMAGE,
-                Settings.State.KEY_VIEWER_TOGGLE_INFO
+                Settings.State.KEY_VIEWER_TOGGLE_INFO,
+                Settings.State.KEY_VIEWER_CLOSE,
+                Settings.State.KEY_VIEWER_PIN_UI,
+                Settings.State.KEY_VIEWER_OPEN_POST,
+                Settings.State.KEY_VIDEO_FULLSCREEN
             ];
 
             if (!viewerHotkeys.includes(event.key)) return;
@@ -2702,15 +2881,43 @@
                 this.navigateToImage(1);
             } else if (event.key === Settings.State.KEY_VIEWER_TOGGLE_INFO) {
                 this.toggleInfoSidebar();
+
+            } else if (event.key === Settings.State.KEY_VIEWER_CLOSE) {
+                this.deactivateLargeView();
+
+            } else if (event.key === Settings.State.KEY_VIEWER_PIN_UI) {
+                this.toggleUiPin();
+
+            } else if (event.key === Settings.State.KEY_VIEWER_OPEN_POST) {
+                this.elements.openPostButton.click();
+
+            } else if (event.key === Settings.State.KEY_VIDEO_FULLSCREEN) {
+                const currentMedia = this.State.thumbnailAnchors[this.State.currentImageIndex]?.querySelector('video.gbs-large-view-media');
+
+                if (!currentMedia) return;
+
+                const isFullscreenActive = document.fullscreenElement;
+
+                if (isFullscreenActive) {
+                    if (typeof document.exitFullscreen === 'function') {
+                        document.exitFullscreen();
+                    }
+                } else {
+                    if (typeof currentMedia.requestFullscreen === 'function') {
+                        currentMedia.requestFullscreen();
+                    }
+                }
             }
         },
         updateNavCounter() {
             if (!this.elements.navCounter) return;
             const currentImageNum = Math.max(0, this.State.currentImageIndex + 1);
-            this.elements.navCounter.textContent = currentImageNum;
+            const totalImages = this.State.thumbnailAnchors.length;
+            this.elements.navCounter.textContent = `${currentImageNum}/${totalImages}`;
             const shouldShow = this.State.isLargeViewActive && currentImageNum > 0;
             this.elements.showInfoButton.style.display = shouldShow ? 'flex' : 'none';
             this.elements.openPostButton.style.display = shouldShow ? 'flex' : 'none';
+            this.elements.pinButton.style.display = shouldShow ? 'flex' : 'none';
         },
         toggleInfoSidebar() {
             this.closePoolPopup();
@@ -2778,7 +2985,7 @@
                 const commentsHeader = Array.from(doc.querySelectorAll('h2')).find(h2 => h2.textContent.trim() === 'User Comments:');
                 let commentsNode = commentsHeader?.nextSibling;
                 while (commentsNode) {
-                   if (commentsNode.nodeName === 'DIV' && (commentsNode.querySelector('.commentAvatar') || commentsNode.querySelector('.commentBody'))) {
+                    if (commentsNode.nodeName === 'DIV' && (commentsNode.querySelector('.commentAvatar') || commentsNode.querySelector('.commentBody'))) {
                         newCommentsContainer.appendChild(commentsNode.cloneNode(true));
                     }
                     if (commentsNode.id === 'paginator' || (commentsNode.nodeName === 'BR' && commentsNode.nextSibling?.id === 'paginator')) {
@@ -2873,8 +3080,8 @@
                                 link.title = 'Add to favorites';
 
                                 link.addEventListener('click', function(e) {
-                                   this.style.backgroundColor = '#daa520';
-                                   setTimeout(() => { this.style.backgroundColor = ''; }, 2000);
+                                    this.style.backgroundColor = '#daa520';
+                                    setTimeout(() => { this.style.backgroundColor = ''; }, 2000);
                                 });
 
                                 actionButtonsContainer.appendChild(link);
@@ -2924,7 +3131,7 @@
                                             poolButton.style.backgroundColor = '#daa520';
                                             setTimeout(() => {
                                                 poolButton.textContent = 'Add to Pool';
-                                                 poolButton.style.backgroundColor = '';
+                                                poolButton.style.backgroundColor = '';
                                             }, 2000);
                                             this.closePoolPopup();
                                         });
@@ -2976,7 +3183,7 @@
                     sidebar.appendChild(tagsScrollWrapper);
 
                     if (localComments.hasChildNodes()) {
-                         actionButtonsContainer.appendChild(commentsButton);
+                        actionButtonsContainer.appendChild(commentsButton);
                     }
 
                     if (actionButtonsContainer.hasChildNodes()) {
@@ -3149,20 +3356,20 @@
             }
             let foundEditLink = false;
             originalContentNodes.forEach(node => {
-            if (foundEditLink) {
-                if (node.nodeType === 3 && node.textContent.includes('|')) {
+                if (foundEditLink) {
+                    if (node.nodeType === 3 && node.textContent.includes('|')) {
+                        foundEditLink = false;
+                        return;
+                    }
                     foundEditLink = false;
+                }
+
+                if (node.tagName === 'A' && node.textContent.trim() === 'Edit') {
+                    foundEditLink = true;
                     return;
                 }
-                foundEditLink = false;
-            }
 
-            if (node.tagName === 'A' && node.textContent.trim() === 'Edit') {
-                foundEditLink = true;
-                return;
-            }
-
-            rightContainer.appendChild(node);
+                rightContainer.appendChild(node);
             });
 
             const resizeLinkContainer = document.querySelector('#resize-link');
@@ -3234,9 +3441,9 @@
                     const doc = new DOMParser().parseFromString(response.responseText, "text/html");
                     currentPools = Array.from(doc.querySelectorAll('tbody tr a[href*="page=pool&s=show"]'))
                         .map(link => ({
-                            id: new URL(link.href, window.location.origin).searchParams.get('id'),
-                            name: link.textContent.trim()
-                        }))
+                        id: new URL(link.href, window.location.origin).searchParams.get('id'),
+                        name: link.textContent.trim()
+                    }))
                         .filter(p => p.id);
 
                 } catch (error) {
@@ -3399,6 +3606,31 @@
                 mediaElement.style.maxHeight = `calc(99vh - ${reservedSpace}px)`;
             }
         },
+        setupDeleteModeCompatibility: function() {
+            const deleteModeCheckbox = document.getElementById('del-mode');
+
+            if (deleteModeCheckbox) {
+                Logger.log("Delete Mode checkbox found. Attaching compatibility listener.");
+
+                deleteModeCheckbox.addEventListener('change', (event) => {
+                    if (event.currentTarget.checked) {
+                        Logger.log("Delete Mode activated. Deactivating conflicting Suite features.");
+
+                        if (MediaViewer.State.isLargeViewActive) {
+                            MediaViewer.deactivateLargeView();
+                        }
+
+                        if (Settings.State.ENABLE_ADD_TO_POOL && AddToPool.State.selectionMode) {
+                            AddToPool.toggleSelectionMode(null);
+                        }
+
+                        if (Settings.State.ENABLE_DOWNLOADER && Downloader.State.isSelectionModeActive) {
+                            Downloader.toggleSelectionMode();
+                        }
+                    }
+                });
+            }
+        },
         processTagList: function(tagListElement, preserveFavoritesLink = false) {
             if (!tagListElement) {
                 Logger.warn("[App.processTagList] No tag list element provided.");
@@ -3486,12 +3718,24 @@
             const isPostPage = contentElement && !contentElement.closest('.thumbnail-preview');
             const isAccountPage = window.location.search.includes('page=account');
 
+            const isPoolShowPage = window.location.search.includes('page=pool&s=show');
+            const isFavoritesPage = window.location.search.includes('page=favorites&s=view');
+
             if (isPostPage) {
                 GlobalState.pageType = 'post';
+                document.body.classList.add('gbs-page-post');
+            } else if (isPoolShowPage) {
+                GlobalState.pageType = 'gallery';
+                document.body.classList.add('gbs-page-pool-show');
+            } else if (isFavoritesPage) {
+                GlobalState.pageType = 'gallery';
+                document.body.classList.add('gbs-page-favorites');
             } else if (isGalleryPage) {
                 GlobalState.pageType = 'gallery';
+                document.body.classList.add('gbs-page-gallery');
             } else if (isAccountPage) {
                 GlobalState.pageType = 'account';
+                document.body.classList.add('gbs-page-account');
             }
 
             this.addGlobalStyles();
@@ -3526,6 +3770,8 @@
                 this.adjustMediaHeight();
                 this.setupMediaScroll();
             }
+
+            this.setupDeleteModeCompatibility();
 
             MediaViewer.init();
             Logger.log("Gelbooru Suite initialized.");
