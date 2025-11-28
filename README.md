@@ -1,5 +1,5 @@
 <p align="center"><b>Check out my other script:</b>
-<br><a href="/scripts/557178" style="color: #ed2553;"><b>Nhentai Flow</b></a> for a better experience in Nhentai.
+<br><a href="https://github.com/Testa-dor/nhentai-flow-userscript" style="color: #ed2553;"><b>Nhentai Flow</b></a> for a better experience in Nhentai.
 </p>
 <hr>
 
