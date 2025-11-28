@@ -1,3 +1,8 @@
+<p align="center"><b>Check out my other script:</b>
+<br><a href="/scripts/557178" style="color: #ed2553;"><b>Nhentai Flow</b></a> for a better experience in Nhentai.
+</p>
+<hr>
+
 <p><strong>Gelbooru Suite</strong> is a userscript that supercharges your Gelbooru experience with a set of smart, modern tools. It's all about making browsing, searching, and viewing media faster, cleaner, and way more enjoyable.</p>
 <p><strong>Design Note:</strong> This script is meant to be used together with the <a href="https://addons.mozilla.org/firefox/addon/imagus/" target="_blank" rel="noopener noreferrer">Imagus</a> extension (or a similar one). Because of that, it intentionally doesn’t include its own hover preview feature, focusing instead on other tools to complement that experience.</p>
 <hr>
@@ -69,6 +74,6 @@ https://github.com/user-attachments/assets/8e7b55e4-5a81-4c09-a5eb-0b6c1a46a40b
 <hr>
 <center>
 <p align="center">Got questions or feedback? Drop a comment.
-<p align="center"><a href="https://discord.com/users/374316521960505354"><img src="https://img.shields.io/badge/Discord-5865F2?logo=discord&logoColor=white" alt="Discord"></a> <a href="https://www.reddit.com/user/RepairNo8377/"><img src="https://img.shields.io/badge/Reddit-FF4500?logo=reddit&logoColor=white" alt="Reddit"></a> <a href="https://youtu.be/Zt2vB-4LpFU?si=Kr70KyAwIav6pdhr"><img src="https://img.shields.io/badge/Youtube-FF0000?logo=youtube&logoColor=white" alt="YouTube"></a>
+<p align="center"><a href="https://discord.com/users/374316521960505354"><img src="https://img.shields.io/badge/Discord-5865F2?logo=discord&logoColor=white" alt="Discord"></a> <a href="https://www.reddit.com/user/RepairNo8377/"><img src="https://img.shields.io/badge/Reddit-FF4500?logo=reddit&logoColor=white" alt="Reddit"></a> <a href="https://youtu.be/Zt2vB-4LpFU?si=Kr70KyAwIav6pdhr"><img src="https://img.shields.io/badge/Youtube-FF0000?logo=youtube&logoColor=white" alt="YouTube"></a> <a href="https://www.codefactor.io/repository/github/testa-dor/gelbooru-suite-userscript/overview/main"><img src="https://www.codefactor.io/repository/github/testa-dor/gelbooru-suite-userscript/badge/main" alt="CodeFactor" /></a>
 </p>
 <p align="center"><small style="color:#aaa;"><sup>Created by Testador · Refactored by Gemini. Licensed under the MIT License.</small></p>
