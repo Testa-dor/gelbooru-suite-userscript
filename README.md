@@ -65,7 +65,7 @@ https://github.com/user-attachments/assets/8e7b55e4-5a81-4c09-a5eb-0b6c1a46a40b
 <p>Almost every feature can be tweaked to your liking. Just open <strong>Suite Settings</strong> from your script manager’s menu.</p>
 <ul>
 <li><strong style="color: #e95757;">Toggle Features:</strong> Easily enable or disable major functions like the Downloader, Previews, or Add to Pool UI.</li>
-<li><strong style="color: #e95757;">Customize Hotkeys:</strong> Set your own keyboard shortcuts for gallery navigation, video controls, and the Immersive Viewer.</li>
+<li><strong style="color: #e95757;">Customize Hotkeys:</strong> Set your own keyboard shortcuts for gallery navigation and the Immersive Viewer.</li>
 <li><strong style="color: #e95757;">API Support:</strong> Add your Gelbooru <strong>API Key</strong> and <strong>User ID</strong> for more reliable API requests (optional).</li>
 <li><strong style="color: #e95757;">Import/Export:</strong> Back up and restore your settings with a simple copy-paste.</li>
 </ul>
