@@ -5,7 +5,7 @@
 // @description Enhances Gelbooru with a categorized pop-up search, an immersive viewer, pool markers, and more.
 // @author      Testador (Refactored by Gemini)
 // @match       *://gelbooru.com/*
-// @icon        https://gelbooru.com/layout/gelbooru-logo.svg
+// @icon        https://gelbooru.com/favicon.ico
 // @grant       GM_download
 // @grant       GM.xmlHttpRequest
 // @grant       GM.getValue
