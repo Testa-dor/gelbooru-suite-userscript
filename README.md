@@ -6,7 +6,7 @@
 <hr>
 <h2 style="background-color:#670000; border:outset;">&nbsp;Key Features</h2>
 <details>
-<summary>Advanced Tag Editor 🏷️</summary><br><p>Ditch the plain text box. The Tag Editor gives you a powerful, visual way to build the perfect search query.</p>
+<summary>Advanced Tag Editor 🏷️</summary><br><p>The Tag Editor gives you a powerful, visual way to build the perfect search query.</p>
 <ul>
 <li><strong style="color: #e95757;">Visual Tag Pills:</strong> Tags are shown as colorful pills, neatly grouped by category (artist, character, copyright, etc.).</li>
 <li><strong style="color: #e95757;">Powerful Modifiers:</strong> Easily add filters for rating, score, and sorting order without having to memorize the syntax.</li>
@@ -19,7 +19,7 @@ https://github.com/user-attachments/assets/e92dd1c9-44fa-4a51-93e4-7c37f10882b7
 <hr>
 </details>
 <details>
-<summary>Immersive Gallery Viewer 🖼️</summary><br><p>Ditch the tab-spam. The Immersive Viewer lets you jump into a dedicated, full-screen mode to browse posts one-by-one, right from the gallery page.</p>
+<summary>Immersive Gallery Viewer 🖼️</summary><br><p>The Immersive Viewer lets you jump into a dedicated, full-screen mode to browse posts one-by-one, right from the gallery page.</p>
 <ul>
 <li><strong style="color: #e95757;">Focused Viewing:</strong> Hides the page clutter, letting you focus on one post at a time in a clean, edge-to-edge layout.</li>
 <li><strong style="color: #e95757;">On-Demand Info Panel:</strong> Press <code>i</code> to slide out a sidebar with all the post's tags, stats, and actions, neatly organized.</li>
