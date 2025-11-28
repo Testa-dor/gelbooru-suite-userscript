@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name        Gelbooru Suite
 // @namespace   GelbooruEnhancer
-// @version     2.2.8
+// @version     2.2.9
 // @description Enhances Gelbooru with a categorized pop-up search, an immersive viewer, pool markers, and more.
 // @author      Testador (Refactored by Gemini)
 // @match       *://gelbooru.com/*
