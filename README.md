@@ -6,11 +6,11 @@
 <hr>
 <h2 style="background-color:#670000; border:outset;">&nbsp;Key Features</h2>
 <details>
-<summary>Advanced Tag Editor 🏷️</summary><br><p>The Tag Editor gives you a powerful, visual way to build the perfect search query.</p>
+<summary>Advanced Tag Editor 🏷️</summary><br><p>A powerful visual tag editor that makes building complex searches fast and painless.</p>
 <ul>
-<li><strong style="color: #e95757;">Visual Tag Pills:</strong> Tags are shown as colorful pills, neatly grouped by category (artist, character, copyright, etc.).</li>
-<li><strong style="color: #e95757;">Powerful Modifiers:</strong> Easily add filters for rating, score, and sorting order without having to memorize the syntax.</li>
-<li><strong style="color: #e95757;">Quick Searches &amp; Blacklist:</strong> Instantly load your saved searches or apply your personal blacklist with a single click.</li>
+<li><strong style="color: #006FFA;">Visual Tag Pills:</strong> Tags appear as colorful pills, grouped by type (artist, character, copyright, and more).</li>
+<li><strong style="color: #006FFA;">Powerful Modifiers:</strong> Easily apply rating filters, score limits, and sorting options, no syntax memorization needed.</li>
+<li><strong style="color: #006FFA;">Quick Searches &amp; Blacklist:</strong> Load your saved searches or apply your personal blacklist with a single click.</li>
   <br>
   
 https://github.com/user-attachments/assets/e92dd1c9-44fa-4a51-93e4-7c37f10882b7
@@ -19,10 +19,10 @@ https://github.com/user-attachments/assets/e92dd1c9-44fa-4a51-93e4-7c37f10882b7
 <hr>
 </details>
 <details>
-<summary>Immersive Gallery Viewer 🖼️</summary><br><p>The Immersive Viewer lets you jump into a dedicated, full-screen mode to browse posts one-by-one, right from the gallery page.</p>
+<summary>Immersive Gallery Viewer 🖼️</summary><br><p>Jump into a clean, full-screen gallery viewer and browse posts one by one, directly from the gallery page.</p>
 <ul>
-<li><strong style="color: #e95757;">Focused Viewing:</strong> Hides the page clutter, letting you focus on one post at a time in a clean, edge-to-edge layout.</li>
-<li><strong style="color: #e95757;">On-Demand Info Panel:</strong> Press <code>i</code> to slide out a sidebar with all the post's tags, stats, and actions, neatly organized.</li>
+<li><strong style="color: #006FFA;">Focused Viewing:</strong> Removes page clutter so you can focus on a single post at a time.</li>
+<li><strong style="color: #006FFA;">On-Demand Info Panel:</strong> Press <code>i</code> to open a side panel with tags, stats, and quick actions.</li>
   <br>
 
 
@@ -33,11 +33,11 @@ https://github.com/user-attachments/assets/51227b05-7889-484a-8a8b-20a197dd04b1
 <hr>
 </details>
 <details>
-<summary>Streamlined Post Page ✨</summary><br><p>Post pages are automatically cleaned up and optimized for the best viewing experience, the moment they load.</p>
+<summary>Streamlined Post Page ✨</summary><br><p>Post pages are automatically cleaned up and optimized as soon as they load.</p>
 <ul>
-<li><strong style="color: #e95757;">Perfect Fit:</strong> The image or video is automatically resized to fit perfectly in your browser window.</li>
-<li><strong style="color: #e95757;">Consolidated Action Bar:</strong> All essential actions <code>Edit, Leave a Comment, Favorites, Add to Pool, and Post Navigation (Previous/Next)</code> are moved into a single, clean bar right below the media.</li>
-<li><strong style="color: #e95757;">Clutter-Free:</strong> Unnecessary elements and ads are moved out of the way, leaving you to focus on the content.</li>
+<li><strong style="color: #006FFA;">Perfect Fit:</strong> Images and videos are auto-scaled to fit your browser window.</li>
+<li><strong style="color: #006FFA;">Unified Action Bar:</strong> Actions like <code>Edit</code>, <code>Comment</code>, <code>Favorite</code>, <code>Add to Pool</code>, and <code>Previous / Next</code> navigation are merged into a single bar below the media.</li>
+<li><strong style="color: #006FFA;">Clutter-Free Layout:</strong> Extra elements and ads are pushed out of the way so the content stays front and center.</li>
     <br>
 
 
@@ -48,10 +48,10 @@ https://github.com/user-attachments/assets/a785c3b0-1ff1-49f6-8574-a46ccc415801
 <hr>
 </details>
 <details>
-<summary>Side-Menu Tools 🛠️</summary><br><p>Access powerful tools from a discreet side-menu on any gallery page.</p>
+<summary>Side-Menu Tools 🛠️</summary><br><p>Quick-access tools available from a discreet side menu on gallery pages.</p>
 <ul>
-<li><strong style="color: #e95757;">Batch Downloader:</strong> Download everything from the current page or activate selection mode to hand-pick specific posts.</li>
-<li><strong style="color: #e95757;">Add to Pool/Favorites:</strong> Quickly add or remove posts from your pools (set up to 5 pools) or from your favorites. Just select the action and click any thumbnail to manage it.</li>
+<li><strong style="color: #006FFA;">Batch Downloader:</strong> Download everything from the current page, or enable selection mode to pick specific posts.</li>
+<li><strong style="color: #006FFA;">Add to Pool/Favorites:</strong> Quickly manage pools (up to 5) or favorites. Choose an action, then click thumbnails to apply it.</li>
   <br>
 
 
@@ -62,12 +62,12 @@ https://github.com/user-attachments/assets/8e7b55e4-5a81-4c09-a5eb-0b6c1a46a40b
 <hr>
 </details>
 <h2 style="background-color:#670000; border:outset;">&nbsp;Settings & Customization</h2>
-<p>Almost every feature can be tweaked to your liking. Just open <strong>Suite Settings</strong> from your script manager’s menu.</p>
+<p>Most features are fully configurable. Just open <strong>Suite Settings</strong> from your script manager menu.</p>
 <ul>
-<li><strong style="color: #e95757;">Toggle Features:</strong> Easily enable or disable major functions like the Downloader, Previews, or Add to Pool UI.</li>
-<li><strong style="color: #e95757;">Customize Hotkeys:</strong> Set your own keyboard shortcuts for gallery navigation and the Immersive Viewer.</li>
-<li><strong style="color: #e95757;">API Support:</strong> Add your Gelbooru <strong>API Key</strong> and <strong>User ID</strong> for more reliable API requests (optional).</li>
-<li><strong style="color: #e95757;">Import/Export:</strong> Back up and restore your settings with a simple copy-paste.</li>
+<li><strong style="color: #006FFA;">Feature Toggles:</strong> Enable or disable major components like the Downloader, Viewer, or Preview tools.</li>
+<li><strong style="color: #006FFA;">Customize Hotkeys:</strong> Set your own keyboard shortcuts for gallery navigation and the immersive viewer.</li>
+<li><strong style="color: #006FFA;">API Support:</strong> Optionally add your Gelbooru API Key and User ID for more stable API requests.</li>
+<li><strong style="color: #006FFA;">Import/Export:</strong> Back up or restore all your settings with a simple copy & paste.</li>
 </ul>
 <hr>
 <center>
