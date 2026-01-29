@@ -3222,7 +3222,7 @@
             if (GlobalState.pageType === 'post') {
                 GM_addStyle(`
                     ul.tag-list li { margin: 0px 4px 0px 0px;  position: relative; }
-                    .aside { max-height: 100vh; margin-top: 10px; overflow-y: auto; position: relative; margin-left: 0px; padding-left: 10px; z-index: 9992; background-color: #1f1f1f; }
+                    .aside { max-height: 100vh; margin-top: 10px; overflow-y: auto; overscroll-behavior: contain; position: relative; margin-left: 0px; padding-left: 10px; z-index: 9992; background-color: #1f1f1f; }
                     footer { padding-bottom: 40px; }
 
                     main #image, main video#gelcomVideoPlayer { width: auto !important; margin: auto !important; object-fit: contain !important; }
