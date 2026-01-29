@@ -1,7 +1,3 @@
-<p align="center"><b>Check out my other script:</b>
-<br><a href="https://github.com/Testa-dor/nhentai-flow-userscript" style="color: #ed2553;"><b>Nhentai Flow</b></a> for a better experience in Nhentai.
-</p>
-<hr>
 <p><strong>Design Note:</strong> This script is meant to be used together with the <a href="https://addons.mozilla.org/firefox/addon/imagus/" target="_blank" rel="noopener noreferrer">Imagus</a> extension (or a similar one). Because of that, it intentionally doesn’t include its own hover preview feature, focusing instead on other tools to complement that experience.</p>
 <hr>
 <h2 style="background-color:#670000; border:outset;">&nbsp;Key Features</h2>
