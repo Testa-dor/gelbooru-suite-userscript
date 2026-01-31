@@ -2,28 +2,28 @@
 <hr>
 <h2 style="background-color:#006FFA; border:outset;">&nbsp;Key Features</h2>
 <details>
-<summary>Tag Editor 🏷️: Visual tag pills, useful search modifiers, quick searches, and blacklist support.</summary>
+<summary><b>Tag Editor 🏷️:</b> Visual tag pills, useful search modifiers, quick searches, and blacklist support.</summary>
 <ul>
 <p><video src=https://github.com/user-attachments/assets/e92dd1c9-44fa-4a51-93e4-7c37f10882b7 width=80%></p>
 </ul>
 <hr>
 </details>
 <details>
-<summary>Gallery Viewer 🖼️: Fullscreen, distraction-free gallery browsing with a quick info panel and keyboard shortcuts.</summary>
+<summary><b>Gallery Viewer 🖼️:</b> Fullscreen, distraction-free gallery browsing with a quick info panel and keyboard shortcuts.</summary>
 <ul>
 <p><video src=https://github.com/user-attachments/assets/51227b05-7889-484a-8a8b-20a197dd04b1 width=80%></p>
 </ul>
 <hr>
 </details>
 <details>
-<summary>Clean Post Page ✨: Clean layout, auto-fit media, and a unified action bar under the post.</summary>
+<summary><b>Clean Post Page ✨:</b> Clean layout, auto-fit media, and a unified action bar under the post.</summary>
 <ul>
 <p><video src=https://github.com/user-attachments/assets/a785c3b0-1ff1-49f6-8574-a46ccc415801 width=80%></p>
 </ul>
 <hr>
 </details>
 <details>
-<summary>Side Menu Tools 🛠️: Batch downloader and quick pool/favorites management from a side menu.</summary>
+<summary><b>Side Menu Tools 🛠️:</b> Batch downloader and quick pool/favorites management from a side menu.</summary>
 <ul>
 <p><video src=https://github.com/user-attachments/assets/8e7b55e4-5a81-4c09-a5eb-0b6c1a46a40b width=80%></p>
 </ul>
