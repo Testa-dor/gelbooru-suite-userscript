@@ -31,6 +31,6 @@
 </details>
 <hr>
 <center>
-<p align="center"><a href="https://discord.com/users/374316521960505354"><img src="https://img.shields.io/badge/Discord-5865F2?logo=discord&logoColor=white" alt="Discord"></a> <a href="https://youtu.be/Zt2vB-4LpFU?si=Kr70KyAwIav6pdhr"><img src="https://img.shields.io/badge/Youtube-FF0000?logo=youtube&logoColor=white" alt="YouTube"></a> <a href="https://www.codefactor.io/repository/github/testa-dor/gelbooru-suite-userscript/overview/main"><img src="https://www.codefactor.io/repository/github/testa-dor/gelbooru-suite-userscript/badge/main" alt="CodeFactor" /></a>
+<p align="center"<a href="https://www.codefactor.io/repository/github/testa-dor/gelbooru-suite-userscript/overview/main"><img src="https://www.codefactor.io/repository/github/testa-dor/gelbooru-suite-userscript/badge/main" alt="CodeFactor" /></a>
 </p>
 <p align="center"><small style="color:#aaa;"><sup>Created by Testador · Refactored by Gemini. Licensed under the MIT License.</small></p>
